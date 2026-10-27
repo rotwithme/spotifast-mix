@@ -1,0 +1,753 @@
+//! Spotify sign-in with the Authorization Code + PKCE flow.
+//!
+//! Independent grants exist because Spotify treats them differently:
+//!
+//! - The **Web API grant** comes from the listener's own Spotify app, its
+//!   personal app. A shared grant from before 0.14.2, issued to an app
+//!   another project registered, keeps working until Spotify refuses it,
+//!   but no new one is ever made: that app was not ours to hand out.
+//! - The **playback grant** uses Spotify's desktop client identity, the one
+//!   librespot streams with. Its access token is exchanged once for a
+//!   reusable credential kept in the platform credential store. Spotify
+//!   answers that identity's Web API requests with "too many requests"
+//!   from the first one, so it cannot stand in for the personal app.
+//!
+//! The browser does the password entry; this process only ever sees the
+//! one-time authorization code that Spotify sends back to a loopback
+//! listener.
+
+use std::net::SocketAddr;
+use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use anyhow::{Context, Result, anyhow, bail};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use rand::RngCore;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
+use tokio::sync::watch;
+
+/// Spotify's own desktop client identity, the one librespot streams with.
+pub const PLAYBACK_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+pub const PLAYBACK_REDIRECT_PORT: u16 = 8898;
+
+/// The port of the personal app's redirect URI, which the listener
+/// registers with their app exactly as [`personal_redirect_uri`] spells it.
+pub const WEB_REDIRECT_PORT: u16 = 8989;
+
+pub const REDIRECT_PATH: &str = "/login";
+
+/// Playback: what librespot needs to stream and join Spotify Connect.
+pub const PLAYBACK_SCOPES: &[&str] = &["streaming"];
+
+/// Web API: what visible features use, plus `user-read-private` for the
+/// plan (Free or Premium), which decides whether local playback is offered
+/// at all; no email.
+pub const WEB_SCOPES: &[&str] = &[
+    "ugc-image-upload",
+    "playlist-modify-private",
+    "playlist-modify-public",
+    "playlist-read-collaborative",
+    "playlist-read-private",
+    "user-follow-modify",
+    "user-follow-read",
+    "user-library-modify",
+    "user-library-read",
+    "user-modify-playback-state",
+    "user-read-playback-position",
+    "user-read-playback-state",
+    "user-read-private",
+    "user-read-recently-played",
+    "user-top-read",
+];
+
+const AUTHORIZE_URL: &str = "https://accounts.spotify.com/authorize";
+const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// A browser sends its request line at once; anything slower or longer is
+/// not the redirect, and must not hold the listener while the user waits.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const REQUEST_LINE_LIMIT: u64 = 8 * 1024;
+/// Refresh this long before the access token expires.
+const REFRESH_MARGIN: Duration = Duration::from_secs(90);
+
+/// One OAuth application identity and what it is asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Grant {
+    pub client_id: String,
+    pub redirect_port: u16,
+    pub scopes: &'static [&'static str],
+}
+
+impl Grant {
+    pub fn playback() -> Self {
+        Self {
+            client_id: PLAYBACK_CLIENT_ID.to_string(),
+            redirect_port: PLAYBACK_REDIRECT_PORT,
+            scopes: PLAYBACK_SCOPES,
+        }
+    }
+
+    pub fn personal_web_api(client_id: &str) -> Result<Self> {
+        let client_id = client_id.trim();
+        if client_id.is_empty() {
+            bail!("a personal Spotify Client ID is required");
+        }
+        Ok(Self {
+            client_id: client_id.to_string(),
+            redirect_port: WEB_REDIRECT_PORT,
+            scopes: WEB_SCOPES,
+        })
+    }
+
+    pub fn redirect_uri(&self) -> String {
+        format!("http://127.0.0.1:{}{REDIRECT_PATH}", self.redirect_port)
+    }
+}
+
+/// The redirect URI a personal app must list, to the character.
+pub fn personal_redirect_uri() -> String {
+    format!("http://127.0.0.1:{WEB_REDIRECT_PORT}{REDIRECT_PATH}")
+}
+
+/// Whether `id` has the shape of a Spotify Client ID: 32 hexadecimal
+/// digits. Anything else cannot be one, so it is caught before the browser.
+pub fn looks_like_client_id(id: &str) -> bool {
+    let id = id.trim();
+    id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Asks Spotify whether it knows a Client ID, without a sign-in: a token
+/// request with a code that cannot be valid is refused as an unknown
+/// client for an ID Spotify has never issued, and as a bad code for one it
+/// has. `None` when the answer says neither, or Spotify cannot be reached:
+/// the browser then finds out.
+pub async fn client_known(http: &reqwest::Client, client_id: &str) -> Option<bool> {
+    let response = http
+        .post(TOKEN_URL)
+        .form(&[
+            ("client_id", client_id),
+            ("grant_type", "authorization_code"),
+            ("code", "spotifast-client-check"),
+            ("redirect_uri", personal_redirect_uri().as_str()),
+            ("code_verifier", random_token(48).as_str()),
+        ])
+        .send()
+        .await
+        .ok()?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    client_known_from(status, &text)
+}
+
+fn client_known_from(status: reqwest::StatusCode, text: &str) -> Option<bool> {
+    if !status.is_client_error() {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(text).ok()?;
+    match value["error"].as_str()? {
+        "invalid_client" => Some(false),
+        "invalid_grant" => Some(true),
+        _ => None,
+    }
+}
+
+/// A started sign-in: the URL to open and the secrets needed to finish it.
+#[derive(Clone, Debug)]
+pub struct Flow {
+    pub verifier: String,
+    pub state: String,
+    pub url: String,
+}
+
+fn random_token(bytes: usize) -> String {
+    let mut buffer = vec![0u8; bytes];
+    rand::rng().fill_bytes(&mut buffer);
+    URL_SAFE_NO_PAD.encode(buffer)
+}
+
+pub fn begin(grant: Grant) -> Flow {
+    let verifier = random_token(48);
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let state = random_token(18);
+    let show_dialog = if grant.client_id == PLAYBACK_CLIENT_ID {
+        "&show_dialog=true"
+    } else {
+        ""
+    };
+    let url = format!(
+        "{AUTHORIZE_URL}?client_id={}&response_type=code&redirect_uri={}&code_challenge_method=S256&code_challenge={challenge}&state={state}&scope={}{show_dialog}",
+        grant.client_id,
+        urlencoding::encode(&grant.redirect_uri()),
+        urlencoding::encode(&grant.scopes.join(" "))
+    );
+    Flow {
+        verifier,
+        state,
+        url,
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TokenResponse {
+    pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub expires_in: Option<u64>,
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+/// Reserve the callback port before offering or opening browser sign-in.
+pub fn listen_for_redirect(port: u16) -> Result<TcpListener> {
+    let address: SocketAddr = ([127, 0, 0, 1], port).into();
+    let listener = std::net::TcpListener::bind(address).with_context(|| {
+        format!("Cannot start Spotify sign-in: port {port} is in use or unavailable. Close the app using this port, then try again.")
+    })?;
+    listener.set_nonblocking(true)?;
+    Ok(TcpListener::from_std(listener)?)
+}
+
+/// Listens on a reserved port for Spotify's redirect and returns the
+/// authorization code.
+///
+/// Ends early when `cancel` flips to true (the user gave up) or after ten
+/// minutes.
+pub async fn wait_for_code_on_listener(
+    listener: TcpListener,
+    expected_state: &str,
+    mut cancel: watch::Receiver<bool>,
+) -> Result<String> {
+    let deadline = tokio::time::sleep(LOGIN_TIMEOUT);
+    tokio::pin!(deadline);
+
+    loop {
+        let (mut stream, _) = tokio::select! {
+            accepted = listener.accept() => accepted.context("redirect listener failed")?,
+            _ = cancel.changed() => {
+                if *cancel.borrow() { bail!("sign-in cancelled"); }
+                continue;
+            }
+            _ = &mut deadline => bail!("sign-in timed out; try again"),
+        };
+
+        let mut reader = BufReader::new(&mut stream).take(REQUEST_LINE_LIMIT);
+        let mut request_line = String::new();
+        match tokio::time::timeout(REQUEST_TIMEOUT, reader.read_line(&mut request_line)).await {
+            Ok(Ok(_)) if request_line.ends_with('\n') => {}
+            _ => continue,
+        }
+        let outcome = parse_request_line(&request_line, expected_state);
+        let (status, body) = match &outcome {
+            Ok(_) => ("200 OK", success_page()),
+            Err(error) => ("400 Bad Request", failure_page(&error.to_string())),
+        };
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+        let _ = stream.shutdown().await;
+        match outcome {
+            Ok(code) => return Ok(code),
+            Err(error) => {
+                // A favicon request or a stale tab is not the redirect; keep waiting.
+                log::debug!("ignored request on the redirect listener: {error}");
+                continue;
+            }
+        }
+    }
+}
+
+fn parse_request_line(line: &str, expected_state: &str) -> Result<String> {
+    let target = line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| anyhow!("malformed request"))?;
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    if path != REDIRECT_PATH {
+        bail!("unexpected redirect path");
+    }
+    let mut code = None;
+    let mut state = None;
+    let mut error = None;
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let value = urlencoding::decode(value)
+            .map(|value| value.into_owned())
+            .unwrap_or_else(|_| value.to_string());
+        match key {
+            "code" => code = Some(value),
+            "state" => state = Some(value),
+            "error" => error = Some(value),
+            _ => {}
+        }
+    }
+    if error.is_some() {
+        bail!("Spotify refused the sign-in. Try again.");
+    }
+    if state.as_deref() != Some(expected_state) {
+        bail!("state mismatch");
+    }
+    code.ok_or_else(|| anyhow!("Spotify did not return an authorization code"))
+}
+
+pub async fn exchange_code(
+    http: &reqwest::Client,
+    grant: &Grant,
+    code: &str,
+    verifier: &str,
+) -> Result<TokenResponse> {
+    token_request(
+        http,
+        &[
+            ("client_id", grant.client_id.as_str()),
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", grant.redirect_uri().as_str()),
+            ("code_verifier", verifier),
+        ],
+    )
+    .await
+    .map_err(|error| anyhow!("{error}"))
+}
+
+pub async fn refresh(
+    http: &reqwest::Client,
+    client_id: &str,
+    refresh_token: &str,
+) -> std::result::Result<TokenResponse, TokenEndpointError> {
+    token_request(
+        http,
+        &[
+            ("client_id", client_id),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+        ],
+    )
+    .await
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TokenEndpointError {
+    /// Spotify refused the grant itself; only the browser can mint a new one.
+    #[error("Spotify rejected the token request ({status}): {detail}")]
+    Rejected { status: u16, detail: String },
+    /// The endpoint could not answer; the grant may still be valid.
+    #[error("token request failed: {0}")]
+    Unreachable(String),
+}
+
+async fn token_request(
+    http: &reqwest::Client,
+    form: &[(&str, &str)],
+) -> std::result::Result<TokenResponse, TokenEndpointError> {
+    let response = http
+        .post(TOKEN_URL)
+        .form(form)
+        .send()
+        .await
+        .map_err(|error| TokenEndpointError::Unreachable(error.to_string()))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    decode_token_response(status, &text)
+}
+
+fn decode_token_response(
+    status: reqwest::StatusCode,
+    text: &str,
+) -> std::result::Result<TokenResponse, TokenEndpointError> {
+    if status.is_client_error() {
+        let value = serde_json::from_str::<serde_json::Value>(text).ok();
+        // OAuth descriptions and malformed bodies may contain usable grants.
+        // Report only known classifications, never authorization response text.
+        let detail = match value.as_ref().and_then(|value| value["error"].as_str()) {
+            Some("invalid_grant") => "The grant expired or was revoked. Sign in again.",
+            Some("invalid_client") => "Check the Spotify application's Client ID.",
+            Some("invalid_scope") => "Spotify did not accept the requested permissions.",
+            Some("access_denied") => "Spotify authorization was declined.",
+            _ => "Sign in again and check the Spotify application settings.",
+        };
+        return Err(TokenEndpointError::Rejected {
+            status: status.as_u16(),
+            detail: detail.into(),
+        });
+    }
+    if !status.is_success() {
+        return Err(TokenEndpointError::Unreachable(format!(
+            "Spotify answered {status}"
+        )));
+    }
+    serde_json::from_str(text).map_err(|_| {
+        TokenEndpointError::Unreachable("Spotify returned an unreadable token response".into())
+    })
+}
+
+/// The Web API grant, serialized only inside protected credential storage.
+/// Deliberately has no Debug implementation: it contains usable secrets.
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct StoredToken {
+    pub client_id: String,
+    pub access_token: String,
+    pub refresh_token: String,
+    /// Unix seconds.
+    pub expires_at: u64,
+    #[serde(default)]
+    pub scope: String,
+}
+
+impl StoredToken {
+    pub fn from_response(
+        client_id: &str,
+        response: TokenResponse,
+        previous_refresh: Option<&str>,
+    ) -> Result<Self> {
+        let refresh_token = response
+            .refresh_token
+            .or_else(|| previous_refresh.map(str::to_string))
+            .ok_or_else(|| anyhow!("Spotify did not return a refresh token"))?;
+        Ok(Self {
+            client_id: client_id.to_string(),
+            access_token: response.access_token,
+            refresh_token,
+            expires_at: now_secs() + response.expires_in.unwrap_or(3600),
+            scope: response.scope.unwrap_or_default(),
+        })
+    }
+
+    pub fn needs_refresh(&self) -> bool {
+        now_secs() + REFRESH_MARGIN.as_secs() >= self.expires_at
+    }
+
+    pub fn expired(&self) -> bool {
+        now_secs() >= self.expires_at
+    }
+
+    /// Whether the grant covers every scope in `scopes`. A grant cannot be
+    /// widened by a refresh, only by the browser.
+    pub fn has_scopes(&self, scopes: &[&str]) -> bool {
+        let granted: Vec<&str> = self.scope.split_whitespace().collect();
+        scopes.iter().all(|scope| granted.contains(scope))
+    }
+
+    pub fn load(path: &Path) -> Option<Self> {
+        let text = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    // Legacy file fixtures only. Production persistence lives in credentials.rs.
+    #[cfg(test)]
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = serde_json::to_string_pretty(self)?;
+        let temporary = path.with_extension("json.tmp");
+        write_private(&temporary, text.as_bytes())?;
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    }
+
+    // Legacy file fixtures only. Production persistence lives in credentials.rs.
+    #[cfg(test)]
+    pub fn remove(path: &Path) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(test)]
+fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(contents)?;
+    file.flush()
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn page(title: &str, heading: &str, body: &str, accent: &str) -> String {
+    format!(
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title>\
+<style>:root{{color-scheme:dark}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1114;color:#e8eaed;font-family:Inter,system-ui,sans-serif}}\
+main{{max-width:28rem;padding:2.5rem;border-radius:1.25rem;background:#181b20;box-shadow:0 20px 60px rgba(0,0,0,.5);text-align:center}}\
+.mark{{width:64px;height:64px;border-radius:50%;background:{accent};display:grid;place-items:center;margin:0 auto 1.25rem}}\
+.mark svg{{width:30px;height:30px;fill:#0f1114}}h1{{font-size:1.4rem;margin:.25rem 0 .5rem}}p{{color:#a5adba;line-height:1.5;margin:0}}</style>\
+<main><div class=\"mark\"><svg viewBox=\"0 0 24 24\"><path d=\"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z\"/></svg></div>\
+<h1>{heading}</h1><p>{body}</p></main><script>setTimeout(function(){{window.close()}},1500)</script></html>"
+    )
+}
+
+fn success_page() -> String {
+    page(
+        "Signed in to Spotifast",
+        "You're signed in",
+        "You can close this tab and go back to Spotifast.",
+        "#1ed760",
+    )
+}
+
+fn failure_page(reason: &str) -> String {
+    page(
+        "Sign-in failed",
+        "Sign-in didn't complete",
+        &format!("{reason}. Return to Spotifast and try again."),
+        "#f5717f",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn token_errors_never_include_authorization_response_contents() {
+        for (status, body) in [
+            (
+                400,
+                r#"{"error":"invalid_grant","error_description":"dummy-refresh-secret"}"#,
+            ),
+            (400, r#"{"error":"dummy-refresh-secret"}"#),
+            (503, "dummy-refresh-secret"),
+            (
+                200,
+                r#"{"access_token":"dummy-refresh-secret","expires_in":"dummy-refresh-secret"}"#,
+            ),
+        ] {
+            let error =
+                super::decode_token_response(reqwest::StatusCode::from_u16(status).unwrap(), body)
+                    .unwrap_err();
+            assert!(!format!("{error:?} {error}").contains("dummy-refresh-secret"));
+        }
+        for request in [
+            "GET /login?error=dummy-authorization-secret&state=ok HTTP/1.1",
+            "GET /dummy-authorization-secret HTTP/1.1",
+        ] {
+            let error = super::parse_request_line(request, "ok").unwrap_err();
+            assert!(!format!("{error:?} {error}").contains("dummy-authorization-secret"));
+        }
+    }
+
+    use super::*;
+
+    #[tokio::test]
+    async fn redirect_listener_can_retry_after_port_is_released() {
+        // A test running alongside can be handed the port between its
+        // release and the retry, so that case tries again on another port.
+        let (listener, port) = (0..10)
+            .find_map(|_| {
+                let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let port = occupied.local_addr().unwrap().port();
+                let error = listen_for_redirect(port).unwrap_err().to_string();
+                assert!(error.contains(&port.to_string()));
+                assert!(error.contains("try again"));
+                drop(occupied);
+                Some((listen_for_redirect(port).ok()?, port))
+            })
+            .expect("a released port can be listened on again");
+        let (cancel, receiver) = watch::channel(false);
+        let waiting =
+            tokio::spawn(
+                async move { wait_for_code_on_listener(listener, "state", receiver).await },
+            );
+        let mut browser = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        browser
+            .write_all(b"GET /login?code=test-code&state=state HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        let code = tokio::time::timeout(Duration::from_secs(2), waiting)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(code, "test-code");
+        drop(cancel);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_or_endless_request_does_not_hold_the_redirect_listener() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut stalled = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        stalled.write_all(b"GET /login?code=").await.unwrap();
+        let mut endless = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        endless.write_all(&[b'a'; 16 * 1024]).await.unwrap();
+        let mut browser = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        browser
+            .write_all(b"GET /login?code=test-code&state=state HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        let (_cancel, receiver) = watch::channel(false);
+        let code = wait_for_code_on_listener(listener, "state", receiver)
+            .await
+            .unwrap();
+        assert_eq!(code, "test-code");
+    }
+
+    #[test]
+    fn old_web_grants_require_image_upload_consent() {
+        let token = StoredToken {
+            scope: WEB_SCOPES
+                .iter()
+                .filter(|scope| **scope != "ugc-image-upload")
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" "),
+            ..Default::default()
+        };
+        assert!(!token.has_scopes(WEB_SCOPES));
+        let renewed = StoredToken {
+            scope: WEB_SCOPES.join(" "),
+            ..token
+        };
+        assert!(renewed.has_scopes(WEB_SCOPES));
+    }
+
+    #[test]
+    fn begin_produces_valid_pkce_material() {
+        let flow = begin(Grant::personal_web_api("0123456789abcdef0123456789abcdef").unwrap());
+        assert!(flow.verifier.len() >= 43);
+        assert!(flow.url.contains("code_challenge_method=S256"));
+        assert!(flow.url.contains(&format!("state={}", flow.state)));
+        assert!(
+            flow.url
+                .contains("client_id=0123456789abcdef0123456789abcdef")
+        );
+        assert!(flow.url.contains(&format!(
+            "redirect_uri={}",
+            urlencoding::encode(&personal_redirect_uri())
+        )));
+        assert!(!flow.url.contains("show_dialog=true"));
+        let playback = begin(Grant::playback());
+        assert!(
+            playback
+                .url
+                .contains(&format!("client_id={PLAYBACK_CLIENT_ID}"))
+        );
+        assert!(playback.url.contains("8898"));
+        assert!(playback.url.contains("show_dialog=true"));
+    }
+
+    #[test]
+    fn playback_scopes_conform_to_spotify_streaming_contract() {
+        assert_eq!(PLAYBACK_SCOPES, &["streaming"]);
+        let playback = Grant::playback();
+        assert_eq!(playback.scopes, vec!["streaming".to_string()]);
+        let personal = Grant::personal_web_api("test-id").unwrap();
+        let flow = begin(personal);
+        assert!(!flow.url.contains("show_dialog=true"));
+    }
+
+    #[test]
+    fn personal_client_id_is_validated_at_the_boundary() {
+        assert_eq!(Grant::personal_web_api("  abc ").unwrap().client_id, "abc");
+        assert!(Grant::personal_web_api("  ").is_err());
+    }
+
+    #[test]
+    fn request_line_parsing() {
+        let code =
+            parse_request_line("GET /login?code=abc%20d&state=s1 HTTP/1.1\r\n", "s1").unwrap();
+        assert_eq!(code, "abc d");
+        assert!(parse_request_line("GET /login?code=abc&state=other HTTP/1.1", "s1").is_err());
+        assert!(parse_request_line("GET /favicon.ico HTTP/1.1", "s1").is_err());
+        assert!(
+            parse_request_line("GET /login?error=access_denied&state=s1 HTTP/1.1", "s1").is_err()
+        );
+    }
+
+    #[test]
+    fn stored_token_round_trips_and_tracks_expiry() {
+        let response = TokenResponse {
+            access_token: "a".into(),
+            refresh_token: Some("r".into()),
+            expires_in: Some(3600),
+            scope: Some("x".into()),
+        };
+        let token = StoredToken::from_response("id", response, None).unwrap();
+        assert!(!token.needs_refresh());
+        assert!(token.has_scopes(&["x"]));
+        assert!(!token.has_scopes(&["x", "y"]));
+        let expired = StoredToken {
+            expires_at: now_secs() + 10,
+            ..token.clone()
+        };
+        assert!(expired.needs_refresh());
+        let dir = std::env::temp_dir().join(format!("spotifast-token-{}", std::process::id()));
+        let path = dir.join("token.json");
+        token.save(&path).unwrap();
+        assert!(StoredToken::load(&path) == Some(token));
+        StoredToken::remove(&path);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The redirect URI the sign-in screen tells listeners to register is
+    /// the one the personal app's sign-in sends.
+    #[test]
+    fn the_redirect_uri_to_register_is_the_one_sign_in_uses() {
+        assert_eq!(personal_redirect_uri(), "http://127.0.0.1:8989/login");
+        assert_eq!(
+            Grant::personal_web_api("id").unwrap().redirect_uri(),
+            personal_redirect_uri()
+        );
+    }
+
+    #[test]
+    fn client_ids_are_32_hexadecimal_digits() {
+        assert!(looks_like_client_id("0123456789abcdef0123456789ABCDEF"));
+        assert!(looks_like_client_id(" 0123456789abcdef0123456789abcdef\n"));
+        assert!(!looks_like_client_id(""));
+        assert!(!looks_like_client_id("0123456789abcdef0123456789abcde"));
+        assert!(!looks_like_client_id("0123456789abcdef0123456789abcdeg"));
+        assert!(!looks_like_client_id(
+            "https://developer.spotify.com/dashboard"
+        ));
+    }
+
+    /// What Spotify's token endpoint answered for a made-up code, with an
+    /// unknown client ID and with a real one (2026-10-25).
+    #[test]
+    fn an_unknown_client_is_told_apart_from_a_bad_code() {
+        let bad = reqwest::StatusCode::BAD_REQUEST;
+        assert_eq!(
+            client_known_from(
+                bad,
+                r#"{"error":"invalid_client","error_description":"Failed to get client"}"#
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            client_known_from(
+                bad,
+                r#"{"error":"invalid_grant","error_description":"Invalid authorization code"}"#
+            ),
+            Some(true)
+        );
+        assert_eq!(client_known_from(bad, "not json"), None);
+        assert_eq!(
+            client_known_from(reqwest::StatusCode::SERVICE_UNAVAILABLE, "{}"),
+            None
+        );
+    }
+}
