@@ -1415,10 +1415,7 @@ mod tests {
         let before = Playlist {
             id: "source".into(),
             snapshot_id: Some("first".into()),
-            tracks: Some(TrackCount {
-                total: 3,
-                ..Default::default()
-            }),
+            tracks: Some(TrackCount { total: 3 }),
             ..Default::default()
         };
         let mut after = before.clone();
