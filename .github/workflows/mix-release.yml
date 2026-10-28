@@ -1,0 +1,127 @@
+name: Spotifast Mix Windows release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build, for example v0.14.3
+        required: true
+        type: string
+      publish:
+        description: Publish after CI, live validation, and release permission are complete
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: mix-release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.repository == 'rotwithme/spotifast-mix'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CMAKE_GENERATOR: Ninja
+      CARGO_TERM_COLOR: always
+      MIX_RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      MIX_TARGET: x86_64-pc-windows-msvc
+    steps:
+      - name: Validate the requested tag
+        id: release
+        shell: pwsh
+        run: |
+          $tag = $env:MIX_RELEASE_TAG
+          if ($tag -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Expected an existing semantic-version v tag.' }
+          "ref=refs/tags/$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.ref }}
+          persist-credentials: false
+      - name: Bind the tag, app version, publisher key, and written notes
+        shell: pwsh
+        run: |
+          $version = ([regex]::Match((Get-Content Cargo.toml -Raw), '(?m)^version\s*=\s*"([^"]+)"')).Groups[1].Value
+          if ($env:MIX_RELEASE_TAG -ne "v$version") { throw 'The tag and Cargo.toml version must agree.' }
+          $key = (Get-Content assets/update-public-key.hex -Raw).Trim()
+          if ($key -notmatch '^[0-9a-fA-F]{64}$') { throw 'Invalid committed Ed25519 publisher key.' }
+          $updates = Get-Content src/updates.rs -Raw
+          if (-not $updates.Contains('rotwithme/spotifast-mix') -or -not $updates.Contains('include_str!("../assets/update-public-key.hex")')) { throw 'The binary must embed this repository and its committed publisher key.' }
+          $notes = "packaging/release-notes/$env:MIX_RELEASE_TAG.md"
+          if (-not (Test-Path -LiteralPath $notes) -or (Get-Item -LiteralPath $notes).Length -eq 0) { throw 'Written release notes are required.' }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Static GLEW for MilkDrop
+        run: vcpkg install glew:x64-windows-static
+      - name: Build the native Windows app
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc --bin spotifast-mix
+      - name: Check the portable executable and package layout
+        shell: pwsh
+        run: |
+          $binary = "target/$env:MIX_TARGET/release/spotifast-mix.exe"
+          $imports = & dumpbin /dependents $binary | Out-String
+          if ($imports -match 'MSVCP[0-9_]*\.dll|VCRUNTIME[0-9_]*\.dll') { throw 'The portable executable requires an external MSVC runtime.' }
+          $headers = & dumpbin /headers $binary | Out-String
+          if ($headers -notmatch '8664 machine \(x64\)') { throw 'Expected a native x64 Windows executable.' }
+          & packaging/windows/package-mix.ps1 -NoBuild -Target $env:MIX_TARGET -BinaryPath $binary
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python packaging/windows/test-mix-packaging.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python packaging/release-names.py dist $env:MIX_RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+      - name: Sign and verify the manifest with this fork's publisher key
+        env:
+          MIX_UPDATE_SIGNING_KEY: ${{ secrets.MIX_UPDATE_SIGNING_KEY }}
+        run: ruby packaging/windows/sign-mix-release.rb dist/checksums.txt assets/update-public-key.hex
+      - name: Verify the signature independently of the private key
+        run: ruby packaging/windows/sign-mix-release.rb --verify dist/checksums.txt assets/update-public-key.hex
+      - name: Require passing CI before public publication
+        if: github.event_name == 'push' || inputs.publish == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $commit = (& git rev-parse HEAD).Trim()
+          $runs = @(& gh run list --repo $env:GITHUB_REPOSITORY --workflow ci.yml --commit $commit --branch main --json status,conclusion --limit 20 | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($runs.Count -eq 0 -or $runs[0].status -ne 'completed' -or $runs[0].conclusion -ne 'success') { throw 'Wait for the latest main CI run on this exact commit to pass before publishing.' }
+      - name: Publish version tags or stage a manually requested draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MIX_PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
+        shell: pwsh
+        run: |
+          $tag = $env:MIX_RELEASE_TAG
+          $notes = "packaging/release-notes/$tag.md"
+          $files = @(Get-ChildItem -LiteralPath dist -File | Where-Object { $_.Extension -eq '.zip' -or $_.Name.EndsWith('.zip.sha256') -or $_.Name -in @('checksums.txt','checksums.txt.sig') } | Select-Object -ExpandProperty FullName)
+          if ($files.Count -ne 4) { throw 'Expected one portable ZIP, its checksum, and the signed checksum manifest.' }
+          $draft = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft --jq '.isDraft' 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if ($draft -ne 'true') { throw 'Refusing to replace an already published release.' }
+            & gh release upload $tag @files --repo $env:GITHUB_REPOSITORY --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & gh release edit $tag --repo $env:GITHUB_REPOSITORY --notes-file $notes --title "Spotifast Mix $tag"
+          } else {
+            & gh release create $tag @files --repo $env:GITHUB_REPOSITORY --verify-tag --draft --title "Spotifast Mix $tag" --notes-file $notes
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:MIX_PUBLISH -eq 'true') {
+            $arguments = @('release','edit',$tag,'--repo',$env:GITHUB_REPOSITORY,'--draft=false')
+            if ($tag.Contains('-')) { $arguments += '--prerelease' }
+            & gh @arguments
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

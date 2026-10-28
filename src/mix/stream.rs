@@ -239,10 +239,9 @@ fn parse_playlist(base: &Url, text: &str) -> Result<Playlist> {
         if let Some(attributes) = line
             .strip_prefix("#EXT-X-KEY:")
             .or_else(|| line.strip_prefix("#EXT-X-SESSION-KEY:"))
+            && attribute(attributes, "METHOD") != Some("NONE")
         {
-            if attribute(attributes, "METHOD") != Some("NONE") {
-                bail!("This SoundCloud stream uses encryption that Local mix does not support");
-            }
+            bail!("This SoundCloud stream uses encryption that Local mix does not support");
         }
     }
     let parsed = m3u8_rs::parse_playlist_res(text.trim_start().as_bytes())

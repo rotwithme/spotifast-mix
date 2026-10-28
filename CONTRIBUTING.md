@@ -11,8 +11,9 @@ backend, scraping, or replacement audio sources.
 The fork's account fields and Local mix controls are part of that approved scope.
 Other new settings and unrelated redesigns still require explicit approval.
 [Spotifast Mix](docs/_reference/spotifast-mix.md) describes the integration contract.
-The initial distribution is an isolated Windows portable ZIP; public publishing,
-upstream updates, and inherited Windows installer takeover are disabled.
+Windows distribution uses an isolated portable ZIP and this fork's signed
+GitHub release channel. Upstream updates and inherited Windows installer
+takeover remain disabled.
 
 ## Before opening an issue
 

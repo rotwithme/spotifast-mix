@@ -50,6 +50,9 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.14.3" date="2026-10-27">
+      <url>https://github.com/rotwithme/spotifast-mix/releases/tag/v0.14.3</url>
+    </release>
     <release version="0.14.2" date="2026-10-26">
       <url>https://github.com/unconfigured/spotifast-mix/releases/tag/v0.14.2</url>
     </release>

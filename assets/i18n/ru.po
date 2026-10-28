@@ -4,9 +4,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: Spotifast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/spotifast/issues/new?"
-"template=translation.yml\n"
-"POT-Creation-Date: 2026-10-27 20:49-0400\n"
+"Report-Msgid-Bugs-To: https://github.com/rotwithme/spotifast-mix/issues\n"
+"POT-Creation-Date: 2026-10-27 21:49-0400\n"
 "PO-Revision-Date: 2026-09-23 20:00+0000\n"
 "Last-Translator: Spotifast contributors\n"
 "Language-Team: Russian\n"
@@ -17,15 +16,13 @@ msgstr ""
 "Plural-Forms: nplurals=3; plural=(n % 10 == 1 && n % 100 != 11 ? 0 : n % 10 "
 ">= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 1 : 2);\n"
 
-#. Translators: The play button on a Library card. {name} is the playlist,
-#. album, artist, or podcast.
+#. Translators: The play button on a Library card. {name} is the playlist, album, artist, or podcast.
 #: src/ui/sidebar.rs:174
 #, rust-format
 msgid "Pause {name}"
 msgstr "Приостановить {name}"
 
-#. Translators: The play button on a Library card. {name} is the playlist,
-#. album, artist, or podcast.
+#. Translators: The play button on a Library card. {name} is the playlist, album, artist, or podcast.
 #: src/ui/sidebar.rs:177
 #, rust-format
 msgid "Play {name}"
@@ -180,8 +177,7 @@ msgstr "Открепить"
 msgid "Pin to top"
 msgstr "Закрепить сверху"
 
-#. Translators: Keep {count} exactly as written. It becomes the number of liked
-#. songs.
+#. Translators: Keep {count} exactly as written. It becomes the number of liked songs.
 #: src/i18n.rs:190
 #, rust-format
 msgid "Playlist • {count} song"
@@ -191,8 +187,7 @@ msgstr[1] "Плейлист • {count} трека"
 msgstr[2] "Плейлист • {count} треков"
 
 #. Translators: Keep {count} exactly as written. It becomes a number of songs.
-#. Translators: Keep {count} exactly as written. It becomes the number of
-#. selected songs.
+#. Translators: Keep {count} exactly as written. It becomes the number of selected songs.
 #. Translators: {count} is a number of songs.
 #: src/i18n.rs:201 src/ui/widgets.rs:696 src/ui/collection.rs:2443
 #, rust-format
@@ -202,8 +197,7 @@ msgstr[0] "{count} трек"
 msgstr[1] "{count} трека"
 msgstr[2] "{count} треков"
 
-#. Translators: Keep {count} exactly as written. It becomes a number of
-#. playlists.
+#. Translators: Keep {count} exactly as written. It becomes a number of playlists.
 #: src/i18n.rs:212
 #, rust-format
 msgid "{count} playlist"
@@ -212,8 +206,7 @@ msgstr[0] "{count} плейлист"
 msgstr[1] "{count} плейлиста"
 msgstr[2] "{count} плейлистов"
 
-#. Translators: Keep {count} exactly as written. It becomes the number of
-#. playlists a folder holds.
+#. Translators: Keep {count} exactly as written. It becomes the number of playlists a folder holds.
 #: src/i18n.rs:223
 #, rust-format
 msgid "Folder • {count} playlist"
@@ -357,14 +350,12 @@ msgstr "Очередь пуста"
 msgid "Queued songs appear here."
 msgstr "Здесь появятся добавленные в очередь треки."
 
-#. Translators: Songs added manually, before the current playlist or album
-#. continues.
+#. Translators: Songs added manually, before the current playlist or album continues.
 #: src/ui/queue.rs:482
 msgid "Playing next"
 msgstr "Добавлено в очередь"
 
-#. Translators: Upcoming songs from the current playlist or album, after
-#. manually queued songs.
+#. Translators: Upcoming songs from the current playlist or album, after manually queued songs.
 #: src/ui/queue.rs:589
 msgid "Next up"
 msgstr "Далее"
@@ -426,7 +417,7 @@ msgid "Couldn't fetch the lyrics: {error}"
 msgstr "Не удалось получить текст песни: {error}"
 
 #: src/ui/lyrics.rs:177 src/ui/lyrics.rs:482 src/ui/lyrics.rs:697
-#: src/ui/settings.rs:622
+#: src/ui/settings.rs:624
 msgid "Try again"
 msgstr "Попробовать снова"
 
@@ -592,8 +583,7 @@ msgstr "Перейти к радио альбома"
 msgid "Go to artist radio"
 msgstr "Перейти к радио исполнителя"
 
-#. Translators: {title} is a song or episode name, {subtitle} its artists or
-#. podcast.
+#. Translators: {title} is a song or episode name, {subtitle} its artists or podcast.
 #: src/ui/widgets.rs:1515
 #, rust-format
 msgid "Play {title}, {subtitle}"
@@ -604,8 +594,7 @@ msgstr "Воспроизвести {title}, {subtitle}"
 msgid "More"
 msgstr "Ещё"
 
-#. Translators: The label beside the pointer while songs are dragged. {name} is
-#. the first song's name and {count} how many more songs are dragged with it.
+#. Translators: The label beside the pointer while songs are dragged. {name} is the first song's name and {count} how many more songs are dragged with it.
 #: src/ui/widgets.rs:2203
 #, rust-format
 msgid "{name} + {count} more"
@@ -733,8 +722,7 @@ msgstr "Не удалось изменить запуск Spotifast вместе
 msgid "{name} is ready"
 msgstr "Устройство {name} готово"
 
-#. Translators: {error} is a sentence saying why the proxy password could not
-#. be stored.
+#. Translators: {error} is a sentence saying why the proxy password could not be stored.
 #: src/app.rs:2594
 #, rust-format
 msgid ""
@@ -941,8 +929,7 @@ msgstr "Не удалось обновить медиатеку: {error}"
 msgid "Nothing on Spotify matches “{query}”"
 msgstr "В Spotify ничего не найдено по запросу «{query}»"
 
-#. Translators: {query} is the words someone searched for; {error} is an error
-#. message.
+#. Translators: {query} is the words someone searched for; {error} is an error message.
 #: src/app.rs:8188
 #, rust-format
 msgid "Couldn't search for “{query}”: {error}"
@@ -1208,7 +1195,7 @@ msgid "Preset name"
 msgstr "Название пресета"
 
 #. Translators: a search keyword for saving equalizer presets.
-#: src/ui/settings.rs:97 src/ui/settings.rs:2057
+#: src/ui/settings.rs:97 src/ui/settings.rs:2093
 msgid "Save preset"
 msgstr "Сохранить пресет"
 
@@ -1218,15 +1205,14 @@ msgstr "Сохранить пресет"
 msgid "Delete “{name}”"
 msgstr "Удалить «{name}»"
 
-#: src/ui/settings.rs:347
+#: src/ui/settings.rs:349
 msgid ""
 "Play the local files your playlists list from a folder on this computer."
 msgstr ""
 "Воспроизводи локальные файлы из своих плейлистов из папки на этом компьютере."
 
-#. Translators: {count} is a number of songs, {folder} a folder on this
-#. computer.
-#: src/ui/settings.rs:356
+#. Translators: {count} is a number of songs, {folder} a folder on this computer.
+#: src/ui/settings.rs:358
 #, rust-format
 msgid "{count} song in {folder}"
 msgid_plural "{count} songs in {folder}"
@@ -1235,37 +1221,37 @@ msgstr[1] "{count} трека в {folder}"
 msgstr[2] "{count} треков в {folder}"
 
 #. Translators: {folder} is a folder on this computer.
-#: src/ui/settings.rs:363
+#: src/ui/settings.rs:365
 #, rust-format
 msgid "Looking for songs in {folder}…"
 msgstr "Поиск треков в {folder}…"
 
-#: src/ui/settings.rs:373 src/ui/keys.rs:355 src/ui/topbar.rs:490
+#: src/ui/settings.rs:375 src/ui/keys.rs:355 src/ui/topbar.rs:490
 #: src/ui/topbar.rs:550
 msgid "Settings"
 msgstr "Настройки"
 
-#: src/ui/settings.rs:387
+#: src/ui/settings.rs:389
 msgid "Search settings"
 msgstr "Поиск настроек"
 
-#: src/ui/settings.rs:403
+#: src/ui/settings.rs:405
 msgid "Open folder"
 msgstr "Открыть папку"
 
-#: src/ui/settings.rs:415
+#: src/ui/settings.rs:417
 msgid "Account"
 msgstr "Аккаунт"
 
-#: src/ui/settings.rs:416 src/ui/topbar.rs:508
+#: src/ui/settings.rs:418 src/ui/topbar.rs:508
 msgid "Sign out"
 msgstr "Выйти из аккаунта"
 
-#: src/ui/settings.rs:419
+#: src/ui/settings.rs:421
 msgid "Personal Spotify app"
 msgstr "Личное приложение Spotify"
 
-#: src/ui/settings.rs:423
+#: src/ui/settings.rs:425
 msgid ""
 "You're still signed in through the shared app Spotifast Mix used before, "
 "which Spotify can stop accepting at any time. Set up your own app to keep "
@@ -1275,199 +1261,203 @@ msgstr ""
 "использовал раньше, а Spotify может в любой момент перестать его принимать. "
 "Настрой своё приложение, чтобы продолжать слушать."
 
-#: src/ui/settings.rs:428
+#: src/ui/settings.rs:430
 msgid "Spotifast Mix signs in through your own free Spotify app."
 msgstr ""
 "Spotifast Mix входит через твоё собственное бесплатное приложение Spotify."
 
-#: src/ui/settings.rs:433
+#: src/ui/settings.rs:435
 msgid "Create an app"
 msgstr "Создать приложение"
 
-#: src/ui/settings.rs:436
+#: src/ui/settings.rs:438
 msgid "Create one for free in Spotify's developer dashboard."
 msgstr "Создай его бесплатно в панели разработчика Spotify."
 
-#: src/ui/settings.rs:441
+#: src/ui/settings.rs:443
 msgid "Personal app ready"
 msgstr "Личное приложение готово"
 
-#: src/ui/settings.rs:445
+#: src/ui/settings.rs:447
 msgid "Supported requests use your app. Other requests use the shared app."
 msgstr ""
 "Поддерживаемые запросы идут через твоё приложение, остальные через общее."
 
-#: src/ui/settings.rs:448
+#: src/ui/settings.rs:450
 msgid "Spotifast Mix uses your app for Spotify's Web API."
 msgstr "Spotifast Mix использует твоё приложение для Web API Spotify."
 
-#: src/ui/settings.rs:453
+#: src/ui/settings.rs:455
 msgid "Authorize your personal app"
 msgstr "Авторизуй личное приложение"
 
-#: src/ui/settings.rs:456
+#: src/ui/settings.rs:458
 msgid "Spotify opens in your browser to verify the account."
 msgstr "Spotify откроется в браузере для проверки аккаунта."
 
-#: src/ui/settings.rs:490
+#: src/ui/settings.rs:492
 msgid "Spotify Free, local playback needs Premium"
 msgstr "Spotify Free, для локального воспроизведения нужен Premium"
 
 #. Translators: {username} is the Spotify account's user name.
-#: src/ui/settings.rs:504
+#: src/ui/settings.rs:506
 #, rust-format
 msgid "Connected as {username}"
 msgstr "Вход выполнен как {username}"
 
-#: src/ui/settings.rs:545 src/ui/login.rs:394
+#: src/ui/settings.rs:547 src/ui/login.rs:394
 msgid "Client ID"
 msgstr "Client ID"
 
-#: src/ui/settings.rs:573
+#: src/ui/settings.rs:575
 msgid "Setup guide"
 msgstr "Инструкция по настройке"
 
-#: src/ui/settings.rs:585
+#: src/ui/settings.rs:587
 msgid "Authorize"
 msgstr "Авторизовать"
 
-#: src/ui/settings.rs:597
+#: src/ui/settings.rs:599
 msgctxt "playback status"
 msgid "Ready"
 msgstr "Готово"
 
-#: src/ui/settings.rs:598
+#: src/ui/settings.rs:600
 msgid "This computer is a Spotify Connect device."
 msgstr "Этот компьютер работает как устройство Spotify Connect."
 
-#: src/ui/settings.rs:602
+#: src/ui/settings.rs:604
 msgctxt "playback status"
 msgid "Setting up"
 msgstr "Настройка"
 
-#: src/ui/settings.rs:603
+#: src/ui/settings.rs:605
 msgid "Finish authorizing in your browser."
 msgstr "Заверши авторизацию в браузере."
 
-#: src/ui/settings.rs:607
+#: src/ui/settings.rs:609
 msgctxt "playback status"
 msgid "Connecting"
 msgstr "Подключение"
 
-#: src/ui/settings.rs:608 src/ui/login.rs:272
+#: src/ui/settings.rs:610 src/ui/login.rs:272
 msgid "Connecting to Spotify…"
 msgstr "Подключение к Spotify…"
 
-#: src/ui/settings.rs:612
+#: src/ui/settings.rs:614
 msgctxt "playback status"
 msgid "Waiting for network"
 msgstr "Ожидание сети"
 
-#: src/ui/settings.rs:615
+#: src/ui/settings.rs:617
 msgid "Waiting for network connectivity to resume playback."
 msgstr "Ожидание подключения к сети для возобновления воспроизведения."
 
-#: src/ui/settings.rs:620
+#: src/ui/settings.rs:622
 msgctxt "playback status"
 msgid "Unavailable"
 msgstr "Недоступно"
 
-#: src/ui/settings.rs:625
+#: src/ui/settings.rs:627
 msgctxt "playback status"
 msgid "Not set up"
 msgstr "Не настроено"
 
-#: src/ui/settings.rs:628
+#: src/ui/settings.rs:630
 msgid "Requires Spotify Premium and a one-time browser sign-in."
 msgstr "Нужен Spotify Premium и однократный вход через браузер."
 
-#: src/ui/settings.rs:630
+#: src/ui/settings.rs:632
 msgid "Enable playback here"
 msgstr "Включить воспроизведение здесь"
 
-#: src/ui/settings.rs:633
+#: src/ui/settings.rs:635
 msgid "Playback on this computer"
 msgstr "Воспроизведение на этом компьютере"
 
-#: src/ui/settings.rs:634
+#: src/ui/settings.rs:636
 msgid "Normalize volume"
 msgstr "Нормализация громкости"
 
-#: src/ui/settings.rs:635
+#: src/ui/settings.rs:637
 msgid "Autoplay"
 msgstr "Автовоспроизведение"
 
-#: src/ui/settings.rs:636
+#: src/ui/settings.rs:638
 msgid "Gapless playback"
 msgstr "Воспроизведение без пауз"
 
-#: src/ui/settings.rs:637
+#: src/ui/settings.rs:639
 msgid "Keep music playing when the window closes"
 msgstr "Продолжать воспроизведение после закрытия окна"
 
-#: src/ui/settings.rs:638
+#: src/ui/settings.rs:641
+msgid "Automatic update checks"
+msgstr "Автоматически проверять обновления"
+
+#: src/ui/settings.rs:643
 msgid "Updates"
 msgstr "Обновления"
 
-#: src/ui/settings.rs:639
+#: src/ui/settings.rs:645
 msgid "Audio cache"
 msgstr "Кэш аудио"
 
-#: src/ui/settings.rs:640
+#: src/ui/settings.rs:646
 msgid "Apply and restart playback"
 msgstr "Применить и перезапустить воспроизведение"
 
-#: src/ui/settings.rs:641
+#: src/ui/settings.rs:647
 msgid "Restart local playback to apply these settings."
 msgstr "Перезапусти локальное воспроизведение, чтобы применить эти настройки."
 
-#: src/ui/settings.rs:642
+#: src/ui/settings.rs:648
 msgid "Download updates automatically"
 msgstr "Загружать обновления автоматически"
 
-#: src/ui/settings.rs:643
+#: src/ui/settings.rs:649
 msgid "Show in Dock"
 msgstr "Показывать в Dock"
 
-#: src/ui/settings.rs:644
+#: src/ui/settings.rs:650
 msgid "Start with your computer"
 msgstr "Запускать вместе с компьютером"
 
 #. Translators: {status} is a playback state such as Ready or Not set up.
-#: src/ui/settings.rs:658
+#: src/ui/settings.rs:664
 #, rust-format
 msgid "Status: {status}"
 msgstr "Состояние: {status}"
 
-#: src/ui/settings.rs:662
+#: src/ui/settings.rs:668
 msgid "Device name"
 msgstr "Имя устройства"
 
-#: src/ui/settings.rs:663
+#: src/ui/settings.rs:669
 msgid "How this computer appears in Spotify Connect."
 msgstr "Как этот компьютер отображается в Spotify Connect."
 
-#: src/ui/settings.rs:666
+#: src/ui/settings.rs:672
 msgid "Audio quality"
 msgstr "Качество звука"
 
-#: src/ui/settings.rs:667
+#: src/ui/settings.rs:673
 msgid "Higher bitrates use more data and cache space."
 msgstr "Более высокий битрейт расходует больше трафика и места в кэше."
 
-#: src/ui/settings.rs:671
+#: src/ui/settings.rs:677
 msgid "Keep loud and quiet tracks at a similar level."
 msgstr "Громкие и тихие треки звучат на одном уровне."
 
-#: src/ui/settings.rs:675
+#: src/ui/settings.rs:681
 msgid "Keep playing similar songs when your music ends."
 msgstr "Когда музыка закончится, играют похожие треки."
 
-#: src/ui/settings.rs:679
+#: src/ui/settings.rs:685
 msgid "Play tracks without silence between them."
 msgstr "Треки воспроизводятся без тишины между ними."
 
-#: src/ui/settings.rs:686
+#: src/ui/settings.rs:692
 msgid ""
 "Spotifast Mix hides to the system tray. Quit from the tray menu or with "
 "Ctrl+Q."
@@ -1475,7 +1465,7 @@ msgstr ""
 "Spotifast Mix сворачивается в системный трей. Выйти можно через меню трея "
 "или по Ctrl+Q."
 
-#: src/ui/settings.rs:691
+#: src/ui/settings.rs:697
 msgid ""
 "Spotifast Mix hides to the menu bar. Quit from its menu-bar icon or with "
 "Cmd+Q."
@@ -1483,11 +1473,15 @@ msgstr ""
 "Spotifast Mix сворачивается в строку меню. Выйти можно через значок в строке "
 "меню или по Cmd+Q."
 
-#: src/ui/settings.rs:701
+#: src/ui/settings.rs:705
+msgid "Checks GitHub once a day. No personal data is sent."
+msgstr "Проверка на GitHub раз в день. Личные данные не отправляются."
+
+#: src/ui/settings.rs:711
 msgid "Output buffer"
 msgstr "Буфер вывода"
 
-#: src/ui/settings.rs:704
+#: src/ui/settings.rs:714
 msgid ""
 "More buffering can prevent clicks on busy computers. Less buffering makes "
 "controls respond sooner."
@@ -1495,33 +1489,33 @@ msgstr ""
 "Больший буфер помогает избежать щелчков на загруженном компьютере. Меньший "
 "ускоряет отклик элементов управления."
 
-#: src/ui/settings.rs:710
+#: src/ui/settings.rs:720
 msgid "Save downloaded audio for later playback."
 msgstr "Сохранять загруженный звук для повторного воспроизведения."
 
-#: src/ui/settings.rs:713
+#: src/ui/settings.rs:723
 msgid "Playback settings applied"
 msgstr "Настройки воспроизведения применены"
 
-#: src/ui/settings.rs:718
+#: src/ui/settings.rs:728
 msgid "Downloads in the background. You choose when to restart."
 msgstr "Загружается в фоне. Когда перезапустить, решаешь ты."
 
-#: src/ui/settings.rs:723 src/ui/settings.rs:967
+#: src/ui/settings.rs:733 src/ui/settings.rs:977
 msgid "MacBook notch widget"
 msgstr "Виджет для выреза MacBook"
 
-#: src/ui/settings.rs:726
+#: src/ui/settings.rs:736
 msgid "Show interactive Now Playing widget when hovering over the notch."
 msgstr ""
 "Показывать интерактивный виджет «Сейчас играет» при наведении курсора на "
 "вырез."
 
-#: src/ui/settings.rs:730
+#: src/ui/settings.rs:740
 msgid "Local files"
 msgstr "Локальные файлы"
 
-#: src/ui/settings.rs:735
+#: src/ui/settings.rs:745
 msgid ""
 "When off, Spotifast Mix lives in the menu bar and leaves Cmd+Tab. Open it "
 "from its menu-bar icon."
@@ -1529,165 +1523,165 @@ msgstr ""
 "Если выключено, Spotifast Mix остаётся только в строке меню и не появляется "
 "в Cmd+Tab. Открывайте его через значок в строке меню."
 
-#: src/ui/settings.rs:741
+#: src/ui/settings.rs:751
 msgid "Tray icon"
 msgstr "Значок в трее"
 
-#: src/ui/settings.rs:742
+#: src/ui/settings.rs:752
 msgid "White or black can match your panel or taskbar."
 msgstr "Белый или чёрный подойдёт к вашей панели или панели задач."
 
-#: src/ui/settings.rs:760
+#: src/ui/settings.rs:770
 msgid "Reconnect"
 msgstr "Переподключиться"
 
-#: src/ui/settings.rs:792
+#: src/ui/settings.rs:802
 msgid "Normal · 96 kbps"
 msgstr "Обычное · 96 кбит/с"
 
-#: src/ui/settings.rs:793
+#: src/ui/settings.rs:803
 msgid "High · 160 kbps"
 msgstr "Высокое · 160 кбит/с"
 
-#: src/ui/settings.rs:794
+#: src/ui/settings.rs:804
 msgid "Very high · 320 kbps"
 msgstr "Очень высокое · 320 кбит/с"
 
-#: src/ui/settings.rs:899
+#: src/ui/settings.rs:909
 msgctxt "tray icon"
 msgid "Colour"
 msgstr "Цветной"
 
-#: src/ui/settings.rs:900
+#: src/ui/settings.rs:910
 msgctxt "tray icon"
 msgid "White"
 msgstr "Белый"
 
-#: src/ui/settings.rs:901
+#: src/ui/settings.rs:911
 msgctxt "tray icon"
 msgid "Black"
 msgstr "Чёрный"
 
-#: src/ui/settings.rs:993
+#: src/ui/settings.rs:1029
 msgid "Choose folder"
 msgstr "Выбрать папку"
 
-#: src/ui/settings.rs:994 src/ui/dialogs.rs:96
+#: src/ui/settings.rs:1030 src/ui/dialogs.rs:96
 msgid "Remove"
 msgstr "Удалить"
 
-#: src/ui/settings.rs:1083
+#: src/ui/settings.rs:1119
 msgid "Playback settings applied."
 msgstr "Настройки воспроизведения применены."
 
-#: src/ui/settings.rs:1090
+#: src/ui/settings.rs:1126
 msgid "Appearance"
 msgstr "Внешний вид"
 
-#: src/ui/settings.rs:1091
+#: src/ui/settings.rs:1127
 msgid "Theme"
 msgstr "Тема"
 
-#: src/ui/settings.rs:1092
+#: src/ui/settings.rs:1128
 msgid "How to make a theme"
 msgstr "Как создать тему"
 
-#: src/ui/settings.rs:1093
+#: src/ui/settings.rs:1129
 msgid "Open themes folder"
 msgstr "Открыть папку тем"
 
-#: src/ui/settings.rs:1094
+#: src/ui/settings.rs:1130
 msgid "Colour from album art"
 msgstr "Цвет из обложки"
 
-#: src/ui/settings.rs:1095
+#: src/ui/settings.rs:1131
 msgid "Compact library sidebar"
 msgstr "Компактная боковая панель медиатеки"
 
-#: src/ui/settings.rs:1096
+#: src/ui/settings.rs:1132
 msgid "Compact track list"
 msgstr "Компактный список треков"
 
-#: src/ui/settings.rs:1097
+#: src/ui/settings.rs:1133
 msgid "Middle-click autoscroll"
 msgstr "Автопрокрутка средней кнопкой"
 
-#: src/ui/settings.rs:1098
+#: src/ui/settings.rs:1134
 msgid "Custom title bar"
 msgstr "Собственный заголовок окна"
 
-#: src/ui/settings.rs:1100
+#: src/ui/settings.rs:1136
 msgid "Player bar visualizer"
 msgstr "Визуализатор в панели плеера"
 
-#: src/ui/settings.rs:1101
+#: src/ui/settings.rs:1137
 msgid "Click player bar to change visualizer"
 msgstr "Нажатие на панель воспроизведения меняет визуализацию"
 
-#: src/ui/settings.rs:1110
+#: src/ui/settings.rs:1146
 msgid "Light mode theme"
 msgstr "Тема для светлого режима"
 
-#: src/ui/settings.rs:1113
+#: src/ui/settings.rs:1149
 msgid ""
 "Used while your computer is in light mode. Only light themes are listed."
 msgstr ""
 "Используется, когда компьютер в светлом режиме. Показаны только светлые темы."
 
-#: src/ui/settings.rs:1117
+#: src/ui/settings.rs:1153
 msgid "Dark mode theme"
 msgstr "Тема для тёмного режима"
 
-#: src/ui/settings.rs:1120
+#: src/ui/settings.rs:1156
 msgid "Used while your computer is in dark mode. Only dark themes are listed."
 msgstr ""
 "Используется, когда компьютер в тёмном режиме. Показаны только тёмные темы."
 
-#: src/ui/settings.rs:1137
+#: src/ui/settings.rs:1173
 msgid "Follow system uses your Omarchy colours."
 msgstr "«Как в системе» использует цвета Omarchy."
 
-#: src/ui/settings.rs:1141
+#: src/ui/settings.rs:1177
 msgid "Follow system uses your desktop's light or dark appearance."
 msgstr ""
 "«Как в системе» использует светлое или тёмное оформление рабочего стола."
 
-#: src/ui/settings.rs:1146 src/ui/settings.rs:2497
+#: src/ui/settings.rs:1182 src/ui/settings.rs:2561
 msgid "Language"
 msgstr "Язык"
 
-#: src/ui/settings.rs:1149
+#: src/ui/settings.rs:1185
 msgid ""
 "System follows your computer's language. Untranslated text stays in English."
 msgstr ""
 "«Системный» использует язык компьютера. Непереведённый текст остаётся на "
 "английском."
 
-#: src/ui/settings.rs:1156
+#: src/ui/settings.rs:1192
 msgid "Use the current cover's colour on pages and the player bar."
 msgstr "Цвет текущей обложки на страницах и в панели плеера."
 
-#: src/ui/settings.rs:1161
+#: src/ui/settings.rs:1197
 msgid "Show names without covers in the sidebar."
 msgstr "Названия без обложек в боковой панели."
 
-#: src/ui/settings.rs:1165
+#: src/ui/settings.rs:1201
 msgid "Show each track on one line without a cover."
 msgstr "Каждый трек в одну строку без обложки."
 
-#: src/ui/settings.rs:1168
+#: src/ui/settings.rs:1204
 msgid "Interface zoom"
 msgstr "Масштаб интерфейса"
 
-#: src/ui/settings.rs:1172
+#: src/ui/settings.rs:1208
 msgid "Ctrl+Plus and Ctrl+Minus work anywhere; Ctrl+0 resets."
 msgstr "Ctrl+Plus и Ctrl+Minus работают везде; Ctrl+0 сбрасывает масштаб."
 
-#: src/ui/settings.rs:1176
+#: src/ui/settings.rs:1212
 msgid "Cmd+Plus and Cmd+Minus work anywhere; Cmd+0 resets."
 msgstr "Cmd+Plus и Cmd+Minus работают везде; Cmd+0 сбрасывает масштаб."
 
-#: src/ui/settings.rs:1185
+#: src/ui/settings.rs:1221
 msgid ""
 "Middle-click a list, then move the pointer to scroll it. Off by default, "
 "because a middle click usually pastes on Linux."
@@ -1696,7 +1690,7 @@ msgstr ""
 "По умолчанию выключено, потому что в Linux средний щелчок обычно вставляет "
 "текст."
 
-#: src/ui/settings.rs:1193
+#: src/ui/settings.rs:1229
 msgid ""
 "Draw Spotifast Mix's own title bar and window buttons instead of the "
 "desktop's."
@@ -1704,24 +1698,24 @@ msgstr ""
 "Рисовать собственную строку заголовка и кнопки окна Spotifast Mix вместо "
 "элементов окружения рабочего стола."
 
-#: src/ui/settings.rs:1201
+#: src/ui/settings.rs:1237
 msgid ""
 "Show the song moving behind the player bar's controls while it plays here."
 msgstr ""
 "Показывает движение трека за кнопками панели плеера, пока он играет на этом "
 "компьютере."
 
-#: src/ui/settings.rs:1206
+#: src/ui/settings.rs:1242
 msgid "Allow clicks on empty player bar space to cycle the visualizer."
 msgstr ""
 "Разрешить переключение визуализации нажатием на пустое место панели "
 "воспроизведения."
 
-#: src/ui/settings.rs:1209 src/ui/settings.rs:1894
+#: src/ui/settings.rs:1245 src/ui/settings.rs:1930
 msgid "Frame rate"
 msgstr "Частота кадров"
 
-#: src/ui/settings.rs:1212
+#: src/ui/settings.rs:1248
 msgid ""
 "How often the player bar and mini player visualizers draw. Lower rates use "
 "fewer resources. MilkDrop has its own."
@@ -1729,36 +1723,36 @@ msgstr ""
 "Как часто рисуют визуализации панели плеера и мини-плеера. Низкая частота "
 "расходует меньше ресурсов. У MilkDrop своя частота."
 
-#: src/ui/settings.rs:1357
+#: src/ui/settings.rs:1393
 msgid "Off"
 msgstr "Выкл."
 
-#: src/ui/settings.rs:1358
+#: src/ui/settings.rs:1394
 msgid "Spectrum"
 msgstr "Спектр"
 
-#: src/ui/settings.rs:1359
+#: src/ui/settings.rs:1395
 msgid "Waveform"
 msgstr "Осциллограмма"
 
-#: src/ui/settings.rs:1554
+#: src/ui/settings.rs:1590
 msgid "Proxy"
 msgstr "Прокси"
 
-#: src/ui/settings.rs:1556
+#: src/ui/settings.rs:1592
 msgid "Mode, host, port, username and password"
 msgstr "Режим, хост, порт, имя пользователя и пароль"
 
-#: src/ui/settings.rs:1559
+#: src/ui/settings.rs:1595
 msgid "Off, System, HTTP or SOCKS5 proxy for network requests."
 msgstr "Прокси для сетевых запросов: выключен, системный, HTTP или SOCKS5."
 
-#: src/ui/settings.rs:1569
+#: src/ui/settings.rs:1605
 msgctxt "proxy"
 msgid "Mode"
 msgstr "Режим"
 
-#: src/ui/settings.rs:1572
+#: src/ui/settings.rs:1608
 msgid ""
 "Off ignores environment variables. System uses them, and the OS proxy on "
 "macOS and Windows."
@@ -1766,35 +1760,35 @@ msgstr ""
 "«Выкл.» игнорирует переменные окружения. «Системный» использует их, а в "
 "macOS и Windows также прокси ОС."
 
-#: src/ui/settings.rs:1624 src/ui/login.rs:647
+#: src/ui/settings.rs:1660 src/ui/login.rs:647
 msgid "Apply settings"
 msgstr "Применить настройки"
 
-#: src/ui/settings.rs:1636
+#: src/ui/settings.rs:1672
 msgid "Not using a proxy."
 msgstr "Прокси не используется."
 
-#: src/ui/settings.rs:1637
+#: src/ui/settings.rs:1673
 msgid "Using the system proxy."
 msgstr "Используется системный прокси."
 
-#: src/ui/settings.rs:1648
+#: src/ui/settings.rs:1684
 msgid "Winamp skins"
 msgstr "Скины Winamp"
 
-#: src/ui/settings.rs:1649 src/ui/winamp/mod.rs:724 src/ui/winamp/mod.rs:870
+#: src/ui/settings.rs:1685 src/ui/winamp/mod.rs:724 src/ui/winamp/mod.rs:870
 msgid "Always on top"
 msgstr "Поверх всех окон"
 
-#: src/ui/settings.rs:1650
+#: src/ui/settings.rs:1686
 msgid "Show Winamp in taskbar"
 msgstr "Показывать Winamp на панели задач"
 
-#: src/ui/settings.rs:1653
+#: src/ui/settings.rs:1689
 msgid "Mini player"
 msgstr "Мини-плеер"
 
-#: src/ui/settings.rs:1657
+#: src/ui/settings.rs:1693
 msgid ""
 "Use classic Winamp .wsz skins. Press Ctrl+M or click the skin logo to "
 "return. Drop a skin on either window to add it."
@@ -1802,7 +1796,7 @@ msgstr ""
 "Классические скины Winamp .wsz. Нажми Ctrl+M или щёлкни по логотипу скина, "
 "чтобы вернуться. Перетащи скин в любое из окон, чтобы добавить его."
 
-#: src/ui/settings.rs:1661
+#: src/ui/settings.rs:1697
 msgid ""
 "Use classic Winamp .wsz skins. Press Cmd+Shift+M or click the skin logo to "
 "return. Drop a skin on either window to add it."
@@ -1810,68 +1804,68 @@ msgstr ""
 "Классические скины Winamp .wsz. Нажми Cmd+Shift+M или щёлкни по логотипу "
 "скина, чтобы вернуться. Перетащи скин в любое из окон, чтобы добавить его."
 
-#: src/ui/settings.rs:1667
+#: src/ui/settings.rs:1703
 msgid "Skin"
 msgstr "Скин"
 
 #. Translators: {folder} is the path of the skins folder.
-#: src/ui/settings.rs:1671
+#: src/ui/settings.rs:1707
 #, rust-format
 msgid "Installed skins are in {folder}. Find more at the Winamp Skin Museum."
 msgstr ""
 "Установленные скины лежат в {folder}. Другие можно найти в Winamp Skin "
 "Museum."
 
-#: src/ui/settings.rs:1676 src/ui/winamp/mod.rs:711
+#: src/ui/settings.rs:1712 src/ui/winamp/mod.rs:711
 msgid "Size"
 msgstr "Размер"
 
-#: src/ui/settings.rs:1677
+#: src/ui/settings.rs:1713
 msgid "Whole-number scaling keeps skin pixels sharp."
 msgstr "Целочисленное масштабирование сохраняет пиксели скина чёткими."
 
-#: src/ui/settings.rs:1682
+#: src/ui/settings.rs:1718
 msgid "Keep the Winamp window above everything else."
 msgstr "Окно Winamp остаётся поверх всех остальных."
 
-#: src/ui/settings.rs:1688 src/ui/winamp/mod.rs:734
+#: src/ui/settings.rs:1724 src/ui/winamp/mod.rs:734
 msgid "Show in taskbar"
 msgstr "Показывать на панели задач"
 
-#: src/ui/settings.rs:1691
+#: src/ui/settings.rs:1727
 msgid ""
 "Keep a taskbar button for the mini player. The tray icon stays available "
 "when hidden."
 msgstr ""
 "Кнопка мини-плеера на панели задач. Если её скрыть, значок в трее останется."
 
-#: src/ui/settings.rs:1696
+#: src/ui/settings.rs:1732
 msgid "Installed skins"
 msgstr "Установленные скины"
 
-#: src/ui/settings.rs:1709
+#: src/ui/settings.rs:1745
 msgid "Switch to it"
 msgstr "Переключиться"
 
-#: src/ui/settings.rs:1722
+#: src/ui/settings.rs:1758
 msgid "Skin Museum"
 msgstr "Skin Museum"
 
-#: src/ui/settings.rs:1748
+#: src/ui/settings.rs:1784
 msgid "Random"
 msgstr "Случайный"
 
-#: src/ui/settings.rs:1787
+#: src/ui/settings.rs:1823
 #, rust-format
 msgid ""
 "Now showing {skin}. Another one is picked each time the mini player opens."
 msgstr "Сейчас: {skin}. При каждом открытии мини-плеера выбирается другой."
 
-#: src/ui/settings.rs:1843
+#: src/ui/settings.rs:1879
 msgid "MilkDrop window"
 msgstr "Окно MilkDrop"
 
-#: src/ui/settings.rs:1851
+#: src/ui/settings.rs:1887
 msgid ""
 "A projectM visualiser for local playback. Open it here, from the top bar, "
 "with Ctrl+Shift+K, or from the mini player's V menu. Press ? or F1 for its "
@@ -1881,7 +1875,7 @@ msgstr ""
 "верхней панели, по Ctrl+Shift+K или из меню V мини-плеера. Нажми ? или F1, "
 "чтобы увидеть сочетания клавиш."
 
-#: src/ui/settings.rs:1855
+#: src/ui/settings.rs:1891
 msgid ""
 "A projectM visualiser for local playback. Open it here, from the top bar, "
 "with Cmd+Shift+K, or from the mini player's V menu. Press ? or F1 for its "
@@ -1891,12 +1885,12 @@ msgstr ""
 "верхней панели, по Cmd+Shift+K или из меню V мини-плеера. Нажми ? или F1, "
 "чтобы увидеть сочетания клавиш."
 
-#: src/ui/settings.rs:1861 src/ui/settings.rs:2040
+#: src/ui/settings.rs:1897 src/ui/settings.rs:2076
 msgid "Presets"
 msgstr "Пресеты"
 
 #. Translators: {folder} is the path of the MilkDrop presets folder.
-#: src/ui/settings.rs:1866
+#: src/ui/settings.rs:1902
 #, rust-format
 msgid ""
 "None yet in {folder}. Add .milk files here. Spotifast Mix downloads presets "
@@ -1906,7 +1900,7 @@ msgstr ""
 "пресеты, когда MilkDrop впервые откроется с пустой папкой."
 
 #. Translators: {folder} is the path of the MilkDrop presets folder.
-#: src/ui/settings.rs:1872
+#: src/ui/settings.rs:1908
 #, rust-format
 msgid ""
 "One preset in {folder}. Add .milk files here. Spotifast Mix downloads "
@@ -1915,9 +1909,8 @@ msgstr ""
 "В {folder} один пресет. Добавь сюда файлы .milk. Spotifast Mix загрузит "
 "пресеты, когда MilkDrop впервые откроется с пустой папкой."
 
-#. Translators: {count} is the number of presets, {folder} the path of the
-#. MilkDrop presets folder.
-#: src/ui/settings.rs:1878
+#. Translators: {count} is the number of presets, {folder} the path of the MilkDrop presets folder.
+#: src/ui/settings.rs:1914
 #, rust-format
 msgid ""
 "{count} preset in {folder}. Add .milk files here. Spotifast Mix downloads "
@@ -1935,22 +1928,22 @@ msgstr[2] ""
 "В {folder} {count} пресетов. Добавь сюда файлы .milk. Spotifast Mix загрузит "
 "пресеты, когда MilkDrop впервые откроется с пустой папкой."
 
-#: src/ui/settings.rs:1887
+#: src/ui/settings.rs:1923
 msgid "Time per preset"
 msgstr "Время на пресет"
 
-#: src/ui/settings.rs:1890
+#: src/ui/settings.rs:1926
 msgid "How long each preset plays before the next fades in."
 msgstr "Сколько длится пресет до плавного перехода к следующему."
 
-#: src/ui/settings.rs:1898
+#: src/ui/settings.rs:1934
 msgid "Lower rates use fewer resources. Uncapped draws as fast as possible."
 msgstr ""
 "Низкая частота расходует меньше ресурсов. «Без ограничения» рисует так "
 "быстро, как возможно."
 
 #. Translators: {hz} is the screen's refresh rate in hertz.
-#: src/ui/settings.rs:1903
+#: src/ui/settings.rs:1939
 #, rust-format
 msgid ""
 "Your screen refreshes at {hz} Hz. Higher rates do not add visible frames. "
@@ -1959,51 +1952,51 @@ msgstr ""
 "Частота обновления экрана: {hz} Гц. Более высокая частота не добавит видимых "
 "кадров. «Без ограничения» рисует так быстро, как возможно."
 
-#: src/ui/settings.rs:1910
+#: src/ui/settings.rs:1946
 msgid "Resolution"
 msgstr "Разрешение"
 
-#: src/ui/settings.rs:1913
+#: src/ui/settings.rs:1949
 msgid "Half and Quarter use fewer resources and scale the image back up."
 msgstr ""
 "«Половина» и «Четверть» расходуют меньше ресурсов и затем растягивают "
 "изображение."
 
 #. Translators: search keywords for the MilkDrop preset download buttons.
-#: src/ui/settings.rs:1920
+#: src/ui/settings.rs:1956
 msgid "Get presets"
 msgstr "Получить пресеты"
 
-#: src/ui/settings.rs:1958
+#: src/ui/settings.rs:1994
 msgid "Fetching..."
 msgstr "Получение..."
 
 #. Translators: {pack} is the name of a MilkDrop preset pack.
-#: src/ui/settings.rs:1961
+#: src/ui/settings.rs:1997
 #, rust-format
 msgid "Get {pack}"
 msgstr "Получить {pack}"
 
-#: src/ui/settings.rs:2012
+#: src/ui/settings.rs:2048
 msgctxt "resolution"
 msgid "Full"
 msgstr "Полное"
 
-#: src/ui/settings.rs:2013
+#: src/ui/settings.rs:2049
 msgctxt "resolution"
 msgid "Half"
 msgstr "Половина"
 
-#: src/ui/settings.rs:2014
+#: src/ui/settings.rs:2050
 msgctxt "resolution"
 msgid "Quarter"
 msgstr "Четверть"
 
-#: src/ui/settings.rs:2028
+#: src/ui/settings.rs:2064
 msgid "Equalizer"
 msgstr "Эквалайзер"
 
-#: src/ui/settings.rs:2034
+#: src/ui/settings.rs:2070
 msgid ""
 "A ten-band equalizer for playback on this computer. It does not affect other "
 "devices."
@@ -2012,114 +2005,130 @@ msgstr ""
 "устройства не влияет."
 
 #. Translators: a search keyword for the equalizer's preamplifier slider.
-#: src/ui/settings.rs:2042
+#: src/ui/settings.rs:2078
 msgid "Preamp"
 msgstr "Предусилитель"
 
 #. Translators: a search keyword for the equalizer's frequency band sliders.
-#: src/ui/settings.rs:2044
+#: src/ui/settings.rs:2080
 msgid "Bands"
 msgstr "Полосы"
 
 #. Translators: short label under the equalizer's preamplifier slider.
-#: src/ui/settings.rs:2126
+#: src/ui/settings.rs:2162
 msgctxt "equalizer"
 msgid "Pre"
 msgstr "Пред"
 
-#: src/ui/settings.rs:2143
+#: src/ui/settings.rs:2179
 msgid "Storage"
 msgstr "Хранилище"
 
-#: src/ui/settings.rs:2146
+#: src/ui/settings.rs:2182
 msgid "Artwork cache"
 msgstr "Кэш обложек"
 
 #. Translators: {folder} is the path of a cache folder.
-#: src/ui/settings.rs:2148 src/ui/settings.rs:2154
+#: src/ui/settings.rs:2184 src/ui/settings.rs:2190
 #, rust-format
 msgid "Stored in {folder}"
 msgstr "Хранится в {folder}"
 
-#: src/ui/settings.rs:2160
+#: src/ui/settings.rs:2196
 msgid "Play history"
 msgstr "История прослушивания"
 
 #. Translators: {file} is the path of the play history file.
-#: src/ui/settings.rs:2164
+#: src/ui/settings.rs:2200
 #, rust-format
 msgid "Tracks played here are stored in {file}. This file is never uploaded."
 msgstr ""
 "Треки, прослушанные здесь, хранятся в {file}. Этот файл никуда не "
 "отправляется."
 
-#: src/ui/settings.rs:2169
+#: src/ui/settings.rs:2205
 msgid "Sign-in"
 msgstr "Вход"
 
-#: src/ui/settings.rs:2172
+#: src/ui/settings.rs:2208
 msgid "Sign-ins are saved in the system credential store when available."
 msgstr ""
 "Данные входа сохраняются в системном хранилище учётных данных, если оно "
 "доступно."
 
-#: src/ui/settings.rs:2184
+#: src/ui/settings.rs:2220
 msgid "Clear artwork"
 msgstr "Очистить обложки"
 
-#: src/ui/settings.rs:2198
+#: src/ui/settings.rs:2234
 msgid "Clear history"
 msgstr "Очистить историю"
 
-#: src/ui/settings.rs:2210 src/ui/show.rs:42
+#: src/ui/settings.rs:2246 src/ui/show.rs:42
 msgid "About"
 msgstr "О программе"
 
-#: src/ui/settings.rs:2213
+#: src/ui/settings.rs:2249
 msgid ""
 "Built with Rust, egui, and librespot. Not affiliated with Spotify or "
 "SoundCloud."
 msgstr ""
 "Создано на Rust, egui и librespot. Не связано со Spotify или SoundCloud."
 
-#: src/ui/settings.rs:2215 src/ui/dialogs.rs:153 src/ui/keys.rs:365
+#: src/ui/settings.rs:2251 src/ui/dialogs.rs:153 src/ui/keys.rs:365
 #: src/ui/topbar.rs:498
 msgid "Keyboard shortcuts"
 msgstr "Сочетания клавиш"
 
+#: src/ui/settings.rs:2252
+msgid "Check for updates"
+msgstr "Проверить обновления"
+
+#: src/ui/settings.rs:2253
+msgid "Checking…"
+msgstr "Проверка…"
+
+#: src/ui/settings.rs:2254 src/ui/update.rs:65
+msgid "Release notes"
+msgstr "Примечания к выпуску"
+
+#: src/ui/settings.rs:2255
+msgid "Source code"
+msgstr "Исходный код"
+
 #. Translators: {query} is the text typed into the settings search field.
-#: src/ui/settings.rs:2294
+#: src/ui/settings.rs:2358
 #, rust-format
 msgid "No settings for “{query}”"
 msgstr "Нет настроек по запросу «{query}»"
 
-#: src/ui/settings.rs:2295
+#: src/ui/settings.rs:2359
 msgid "Try fewer words, or check the spelling."
 msgstr "Попробуй меньше слов или проверь написание."
 
-#: src/ui/settings.rs:2316
+#: src/ui/settings.rs:2380
 msgctxt "start with your computer"
 msgid "Off"
 msgstr "Выкл."
 
-#: src/ui/settings.rs:2317
+#: src/ui/settings.rs:2381
 msgid "With the window"
 msgstr "С окном"
 
-#: src/ui/settings.rs:2321
+#: src/ui/settings.rs:2385
 msgid "In the menu bar"
 msgstr "В строке меню"
 
-#: src/ui/settings.rs:2323
+#: src/ui/settings.rs:2387
 msgid "In the tray"
 msgstr "В трее"
 
-#: src/ui/settings.rs:2342
+#: src/ui/settings.rs:2406
 msgid "Allow Spotifast Mix in System Settings, General, Login Items."
 msgstr ""
 "Разрешите Spotifast Mix в Системных настройках: Основные, Объекты входа."
 
-#: src/ui/settings.rs:2348
+#: src/ui/settings.rs:2412
 msgid ""
 "Starting in the menu bar needs Keep music playing when the window closes. "
 "Until then, the window opens."
@@ -2127,7 +2136,7 @@ msgstr ""
 "Для запуска в строке меню нужна настройка «Продолжать воспроизведение после "
 "закрытия окна». До тех пор открывается окно."
 
-#: src/ui/settings.rs:2353
+#: src/ui/settings.rs:2417
 msgid ""
 "Starting in the tray needs Keep music playing when the window closes. Until "
 "then, the window opens."
@@ -2135,16 +2144,16 @@ msgstr ""
 "Для запуска в трее нужна настройка «Продолжать воспроизведение после "
 "закрытия окна». До тех пор открывается окно."
 
-#: src/ui/settings.rs:2359
+#: src/ui/settings.rs:2423
 msgid "Open Spotifast Mix when you log in, with its window or in the menu bar."
 msgstr ""
 "Открывать Spotifast Mix при входе в систему: с окном или в строке меню."
 
-#: src/ui/settings.rs:2364
+#: src/ui/settings.rs:2428
 msgid "Open Spotifast Mix when you log in, with its window or in the tray."
 msgstr "Открывать Spotifast Mix при входе в систему: с окном или в трее."
 
-#: src/ui/settings.rs:2470
+#: src/ui/settings.rs:2534
 msgctxt "language"
 msgid "System"
 msgstr "Системный"
@@ -2592,8 +2601,7 @@ msgstr "«{name}» уже есть в «{playlist}». Всё равно доба
 msgid "“{first}” and “{second}” are already in “{playlist}”. Add them anyway?"
 msgstr "«{first}» и «{second}» уже есть в «{playlist}». Всё равно добавить их?"
 
-#. Translators: {first} and {second} are song names, {count} is how many more
-#. songs are already in the playlist, and {playlist} is a playlist name.
+#. Translators: {first} and {second} are song names, {count} is how many more songs are already in the playlist, and {playlist} is a playlist name.
 #: src/ui/dialogs.rs:301
 #, rust-format
 msgid ""
@@ -2696,8 +2704,7 @@ msgstr "Автор: {owner}"
 msgid "Your podcasts"
 msgstr "Твои подкасты"
 
-#. Translators: {time} is the time left in an episode, such as 12 min; {show}
-#. is the podcast's name.
+#. Translators: {time} is the time left in an episode, such as 12 min; {show} is the podcast's name.
 #: src/ui/home.rs:697
 #, rust-format
 msgid "{time} left • {show}"
@@ -3347,10 +3354,6 @@ msgstr "Обновить Spotifast"
 msgid "Close update"
 msgstr "Закрыть обновление"
 
-#: src/ui/update.rs:65
-msgid "Release notes"
-msgstr "Примечания к выпуску"
-
 #: src/ui/update.rs:72
 msgid "Checking download…"
 msgstr "Проверка загрузки…"
@@ -3456,15 +3459,13 @@ msgstr "Воспроизводить в моно"
 msgid "Play in stereo"
 msgstr "Воспроизводить в стерео"
 
-#. Translators: {percent} is a number from 0 to 100, followed by a percent
-#. sign.
+#. Translators: {percent} is a number from 0 to 100, followed by a percent sign.
 #: src/ui/winamp/mod.rs:1168
 #, rust-format
 msgid "Balance: {percent}% left"
 msgstr "Баланс: {percent}% влево"
 
-#. Translators: {percent} is a number from 0 to 100, followed by a percent
-#. sign.
+#. Translators: {percent} is a number from 0 to 100, followed by a percent sign.
 #: src/ui/winamp/mod.rs:1173
 #, rust-format
 msgid "Balance: {percent}% right"
@@ -3474,15 +3475,13 @@ msgstr "Баланс: {percent}% вправо"
 msgid "Balance: center"
 msgstr "Баланс: по центру"
 
-#. Translators: {percent} is a number from 0 to 100, followed by a percent
-#. sign.
+#. Translators: {percent} is a number from 0 to 100, followed by a percent sign.
 #: src/ui/winamp/mod.rs:1181
 #, rust-format
 msgid "Volume: {percent}%"
 msgstr "Громкость: {percent}%"
 
-#. Translators: {position} and {duration} are times such as 2:12, {percent} a
-#. number from 0 to 100.
+#. Translators: {position} and {duration} are times such as 2:12, {percent} a number from 0 to 100.
 #: src/ui/winamp/mod.rs:1197
 #, rust-format
 msgid "Seek to: {position}/{duration} ({percent}%)"
@@ -3626,8 +3625,7 @@ msgctxt "month"
 msgid "Dec"
 msgstr "дек."
 
-#. Translators: A date. {month} is an abbreviated month name; reorder as your
-#. language writes dates.
+#. Translators: A date. {month} is an abbreviated month name; reorder as your language writes dates.
 #: src/util.rs:94
 #, rust-format
 msgid "{month} {day}, {year}"

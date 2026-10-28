@@ -52,7 +52,25 @@ next to the executable. It does not read an upstream Spotifast profile.
 
 Inherited Windows installers are disabled. This version has separate app data,
 credentials, IPC, and desktop identity, and cannot install upstream Spotifast updates.
-There is no configured public release or package-publishing destination.
+
+## Updates
+
+Windows x64 portable builds check [this project's GitHub releases](https://github.com/rotwithme/spotifast-mix/releases).
+A new build appears in the existing update icon. Open it, download the update,
+and choose **Restart to update**. The app verifies the publisher signature and
+download checksum, then replaces its executable while preserving accounts,
+settings, and playlists. Settings includes **Check for updates** and the existing
+automatic check/download options.
+
+The earlier 0.14.2 custom builds had updates disabled. Upgrade them once with
+`packaging/windows/bootstrap-mix.ps1` from this repository, or replace their EXE
+with the current portable release. The bootstrap script finds a running portable
+copy, waits for you to quit it from the tray, and preserves its data folder.
+Future builds use the in-app update flow.
+
+To publish an update, bump the version and release notes, push `main`, wait for
+its CI checks, then push the matching `v` version tag. The Windows release
+workflow builds, signs, and publishes that version in this repository.
 
 ## Before release
 

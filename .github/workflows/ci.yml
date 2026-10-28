@@ -201,7 +201,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & packaging\windows\package-mix.ps1 -NoBuild -BinaryPath target\debug\spotifast-mix.exe -OutputDirectory "$env:RUNNER_TEMP\spotifast-mix-portable"
+          $target = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
+          & packaging\windows\package-mix.ps1 -NoBuild -Target $target -BinaryPath target\debug\spotifast-mix.exe -OutputDirectory "$env:RUNNER_TEMP\spotifast-mix-portable"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $archive = Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\spotifast-mix-portable" -Filter '*.zip'
           if (@($archive).Count -ne 1) { throw 'Expected one portable ZIP.' }
@@ -209,12 +210,15 @@ jobs:
           if ((Get-FileHash -LiteralPath $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $checksum) { throw 'Portable checksum mismatch.' }
           $unpacked = Join-Path $env:RUNNER_TEMP 'spotifast-mix-portable-check'
           Expand-Archive -LiteralPath $archive.FullName -DestinationPath $unpacked
+          $top = @(Get-ChildItem -LiteralPath $unpacked)
+          if ($top.Count -ne 1 -or -not $top[0].PSIsContainer -or $top[0].Name -ne $archive.BaseName) { throw 'Expected one versioned portable directory.' }
+          $payload = Join-Path $unpacked $archive.BaseName
           $expected = @('Getting started.md','LICENSE','README.md','spotifast-mix-portable.txt','spotifast-mix.exe') | Sort-Object
-          $contents = Get-ChildItem -LiteralPath $unpacked
+          $contents = Get-ChildItem -LiteralPath $payload
           if ($contents | Where-Object PSIsContainer) { throw 'Profiles or unexpected directories in portable ZIP.' }
           $actual = $contents | Select-Object -ExpandProperty Name | Sort-Object
           if (Compare-Object $expected $actual) { throw 'Unexpected files in portable ZIP.' }
-          & (Join-Path $unpacked 'spotifast-mix.exe') --version
+          & (Join-Path $payload 'spotifast-mix.exe') --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # The inherited Inno/MSI entrypoints must remain blocked. These tests

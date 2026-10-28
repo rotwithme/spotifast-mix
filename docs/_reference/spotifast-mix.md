@@ -130,8 +130,18 @@ app's atomic background writer.
 SoundCloud requests go to its authorization/API endpoints and the stream and
 artwork hosts returned by the API. They use the configured proxy. Existing Spotify
 network behavior remains documented in [How it connects](how-it-connects.md).
-The custom app has no telemetry or hosted backend. Automatic and manual update
-installation are disabled until a separate release repository and signing key exist.
+The custom app has no telemetry or hosted backend. Windows x64 portable updates
+come from [rotwithme/spotifast-mix](https://github.com/rotwithme/spotifast-mix/releases),
+using this fork's own embedded Ed25519 publisher key. New releases appear in the
+existing update icon. Download and choose **Restart to update**; only the EXE is
+replaced, and the helper restores the previous EXE if startup fails. Package-manager
+installs and other platform builds keep their existing installation boundaries.
+
+The first upgrade from the update-disabled 0.14.2 custom build requires the
+one-time `packaging/windows/bootstrap-mix.ps1` script or manual EXE replacement.
+The bootstrap trusts the repository's HTTPS release and verifies its SHA-256;
+subsequent native updates also verify the publisher's Ed25519 signature. It waits
+for the exact old app to quit, without terminating it or changing an upstream copy.
 
 ## Build and distribute
 
@@ -151,7 +161,8 @@ The optional Omarchy hook imports `spotifast-mix.json` into
 The fork never modifies the upstream palette folder or contacts an upstream instance.
 
 Inherited release, package publication, documentation deployment, and Flatpak
-publication workflows are explicitly disabled. The main CI still builds, tests,
+publication workflows remain disabled. The separate `mix-release.yml` workflow
+builds and signs this fork's Windows release. The main CI still builds, tests,
 and checks portable ZIPs, macOS bundles, and the Nix package. Re-enabling dormant
 publication recipes requires a configured fork destination and identity review.
 

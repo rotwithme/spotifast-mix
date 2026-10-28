@@ -125,11 +125,13 @@ fn eq_preset_controls(app: &mut App, ui: &mut egui::Ui, current: Option<&str>) {
 
 /// The GitHub release page of the running version, opened by About's
 /// Release notes button. Every release is tagged `v` and its version.
-const RELEASE_NOTES_URL: &str = concat!(
-    env!("CARGO_PKG_REPOSITORY"),
-    "/releases/tag/v",
-    env!("CARGO_PKG_VERSION")
-);
+fn release_notes_url() -> String {
+    format!(
+        "https://github.com/{}/releases/tag/v{}",
+        crate::updates::CONFIG.repository,
+        env!("CARGO_PKG_VERSION")
+    )
+}
 
 fn section_matches(needle: &str, title: &str, rows: &[RowText<'_>]) -> bool {
     let needle = needle.trim().to_lowercase();
@@ -635,7 +637,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let autoplay = gettext(locale, "Autoplay");
     let gapless = gettext(locale, "Gapless playback");
     let keep_playing = gettext(locale, "Keep music playing when the window closes");
-    let update_checks = gettext(locale, "Updates");
+    let update_checks = if crate::updates::ENABLED {
+        gettext(locale, "Automatic update checks")
+    } else {
+        gettext(locale, "Updates")
+    };
     let audio_cache = gettext(locale, "Audio cache");
     let apply_playback = gettext(locale, "Apply and restart playback");
     let apply_playback_note = gettext(locale, "Restart local playback to apply these settings.");
@@ -695,7 +701,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ),
         RowText::new(
             update_checks.clone(),
-            crate::updates::UNAVAILABLE,
+            if crate::updates::ENABLED {
+                gettext(locale, "Checks GitHub once a day. No personal data is sent.")
+            } else {
+                crate::updates::UNAVAILABLE.into()
+            },
         ),
         RowText::new(
             gettext(locale, "Output buffer"),
@@ -972,7 +982,33 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     changed = true;
                 }
             });
-            filtered_row(ui, &palette, &needle, &playback, &playback_rows[7], |_| {});
+            filtered_row(ui, &palette, &needle, &playback, &playback_rows[7], |ui| {
+                if crate::updates::ENABLED
+                    && widgets::switch(
+                        ui,
+                        &palette,
+                        &update_checks,
+                        &mut app.settings.check_for_updates,
+                    )
+                    .changed()
+                {
+                    changed = true;
+                }
+            });
+            if crate::updates::ENABLED {
+                filtered_row(ui, &palette, &needle, &playback, &playback_rows[12], |ui| {
+                    if widgets::switch(
+                        ui,
+                        &palette,
+                        &download_updates,
+                        &mut app.settings.download_updates_automatically,
+                    )
+                    .changed()
+                    {
+                        changed = true;
+                    }
+                });
+            }
             #[cfg(windows)]
             filtered_row(ui, &palette, &needle, &playback, &playback_rows[8], |ui| {
                 ui.horizontal(|ui| {
@@ -2213,19 +2249,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         "Built with Rust, egui, and librespot. Not affiliated with Spotify or SoundCloud.",
     );
     let keyboard_shortcuts = gettext(locale, "Keyboard shortcuts");
-    let release_notes = "Upstream release notes";
-    let source_code = "Upstream Spotifast";
+    let check_for_updates = gettext(locale, "Check for updates");
+    let checking = gettext(locale, "Checking…");
+    let release_notes = gettext(locale, "Release notes");
+    let source_code = gettext(locale, "Source code");
     let about_rows = [
         RowText::new(
             format!("Spotifast Mix {}", env!("CARGO_PKG_VERSION")),
             built_with.clone(),
         ),
         RowText::new(
-            format!("Updates {release_notes}"),
-            format!(
-                "{} {keyboard_shortcuts} {source_code}",
-                crate::updates::UNAVAILABLE
-            ),
+            format!("{check_for_updates} {checking} {release_notes}"),
+            if crate::updates::ENABLED {
+                format!("{keyboard_shortcuts} {source_code}")
+            } else {
+                format!(
+                    "{} {keyboard_shortcuts} {source_code}",
+                    crate::updates::UNAVAILABLE
+                )
+            },
         ),
     ];
     if section_matches(&needle, &about, &about_rows) {
@@ -2250,31 +2292,53 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 });
             });
             ui.add_space(8.0);
-            theme::text(
-                ui,
-                crate::updates::UNAVAILABLE,
-                theme::regular(13.0),
-                palette.secondary,
-            );
-            ui.add_space(8.0);
+            if !crate::updates::ENABLED {
+                theme::text(
+                    ui,
+                    crate::updates::UNAVAILABLE,
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+                ui.add_space(8.0);
+            }
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::splat(8.0);
-                if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), release_notes, false)
-                    .clicked()
+                if crate::updates::ENABLED {
+                    let check_label = if app.update_checking {
+                        &checking
+                    } else {
+                        &check_for_updates
+                    };
+                    if theme::soft_button(ui, &palette, Some(Icon::Refresh), check_label, false)
+                        .clicked()
+                        && !app.update_checking
+                    {
+                        app.actions.push(Action::CheckForUpdates);
+                    }
+                }
+                if theme::soft_button(
+                    ui,
+                    &palette,
+                    Some(Icon::ExternalLink),
+                    &release_notes,
+                    false,
+                )
+                .clicked()
                 {
-                    app.actions
-                        .push(Action::OpenUrl(RELEASE_NOTES_URL.to_owned()));
+                    app.actions.push(Action::OpenUrl(release_notes_url()));
                 }
                 if theme::soft_button(ui, &palette, Some(Icon::Info), &keyboard_shortcuts, false)
                     .clicked()
                 {
                     app.actions.push(Action::ShowDialog(Dialog::Shortcuts));
                 }
-                if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), source_code, false)
+                if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), &source_code, false)
                     .clicked()
                 {
-                    ui.ctx()
-                        .open_url(egui::OpenUrl::new_tab(env!("CARGO_PKG_REPOSITORY")));
+                    app.actions.push(Action::OpenUrl(format!(
+                        "https://github.com/{}",
+                        crate::updates::CONFIG.repository
+                    )));
                 }
             });
             ui.add_space(14.0);
@@ -2618,10 +2682,10 @@ fn eq_curve(ui: &mut egui::Ui, palette: &Palette, settings: &crate::eq::EqSettin
 
 #[cfg(test)]
 mod tests {
-    use super::{RELEASE_NOTES_URL, RowText, row_matches, section_matches};
+    use super::{RowText, release_notes_url, row_matches, section_matches};
 
     #[test]
-    fn soundcloud_accounts_are_reachable_and_update_installation_is_not_offered() {
+    fn soundcloud_accounts_are_reachable_and_update_controls_follow_configuration() {
         use crate::integration::{Action as IntegrationAction, View};
         use crate::model::Action;
         use egui::accesskit::{Action as AccessibleAction, ActionRequest, TreeId};
@@ -2688,13 +2752,45 @@ mod tests {
             action,
             Action::Integration(IntegrationAction::Open(View::Accounts))
         )));
-        let tree = frame(&mut app, "updates", vec![]);
-        assert!(!tree.nodes.iter().any(|(_, node)| matches!(
-            node.label(),
-            Some(
-                "Automatic update checks" | "Download updates automatically" | "Check for updates"
-            )
-        )));
+        // The substring filter uses the shared singular word in all three
+        // labels ("update checks", "updates automatically", and "updates").
+        let tree = frame(&mut app, "update", vec![]);
+        for label in [
+            "Automatic update checks",
+            "Download updates automatically",
+            "Check for updates",
+        ] {
+            assert_eq!(
+                tree.nodes
+                    .iter()
+                    .any(|(_, node)| node.label() == Some(label)),
+                crate::updates::ENABLED,
+                "{label} must follow the configured update channel"
+            );
+        }
+        if crate::updates::ENABLED {
+            let check = tree
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some("Check for updates"))
+                .map(|(id, _)| *id)
+                .unwrap();
+            frame(
+                &mut app,
+                "update",
+                vec![egui::Event::AccessKitActionRequest(ActionRequest {
+                    target_tree: TreeId::ROOT,
+                    target_node: check,
+                    action: AccessibleAction::Click,
+                    data: None,
+                })],
+            );
+            assert!(
+                app.actions
+                    .iter()
+                    .any(|action| matches!(action, Action::CheckForUpdates))
+            );
+        }
         app.backend.shutdown();
     }
 
@@ -2844,14 +2940,16 @@ mod tests {
     }
 
     #[test]
-    fn upstream_release_notes_are_explicitly_the_base_version_reference() {
+    fn release_notes_point_to_this_forks_configured_release() {
         assert_eq!(
-            RELEASE_NOTES_URL,
+            release_notes_url(),
             format!(
-                "https://github.com/crmne/spotifast/releases/tag/v{}",
+                "https://github.com/{}/releases/tag/v{}",
+                crate::updates::CONFIG.repository,
                 env!("CARGO_PKG_VERSION")
             )
         );
+        assert_ne!(crate::updates::CONFIG.repository, "crmne/spotifast");
     }
 
     #[test]

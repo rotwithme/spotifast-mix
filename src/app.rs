@@ -23948,20 +23948,26 @@ mod tests {
         );
     }
 
-    /// An unconfigured fork must never check upstream, including profiles
-    /// that retained the old update preference, on every network condition.
+    /// The fork's own daily update check respects network conditions and the
+    /// availability of a supported update channel on this platform.
     #[test]
-    fn an_unconfigured_fork_never_checks_upstream_on_any_network() {
+    fn fork_update_checks_respect_network_conditions() {
         for (metered, online, follows, checked, why) in [
-            (false, true, true, false, "fork checked on a free network"),
+            (
+                false,
+                true,
+                true,
+                crate::updates::ENABLED,
+                "wrong check behavior on a free network",
+            ),
             (true, true, false, false, "checked on a metered network"),
             (false, false, true, false, "checked without internet"),
             (
                 false,
                 false,
                 false,
-                false,
-                "fork checked ignoring an offline hint",
+                crate::updates::ENABLED,
+                "wrong check behavior for an ignored offline hint",
             ),
         ] {
             let mut app = headless_app();

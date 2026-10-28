@@ -351,10 +351,14 @@ fn format_devices(snapshot: &str) -> String {
 }
 
 pub(crate) fn run() -> eframe::Result<()> {
-    // This fork has no update publisher. Never run the upstream updater helper,
-    // even when an old launcher supplies --apply-update or a receipt. Clap
-    // rejects those arguments rather than allowing replacement of this build.
-    let arguments: Vec<_> = std::env::args_os().collect();
+    // An update-enabled build handles its own helper before touching the
+    // profile or instance lock. Unconfigured builds leave the flags to Clap.
+    let launch = spotifast::updates::ENABLED
+        .then(|| fastframe_update::intercept(&spotifast::updates::CONFIG));
+    let arguments: Vec<_> = launch.as_ref().map_or_else(
+        || std::env::args_os().collect(),
+        |launch| launch.arguments.clone(),
+    );
     // Before any output is listed or opened.
     spotifast::sink::name_in_mixers();
     // A MilkDrop child launch is a bare visualiser window, not the app: it has
@@ -535,7 +539,15 @@ pub(crate) fn run() -> eframe::Result<()> {
     if load_themes {
         app.load_custom_themes(&waker);
     }
-    let receipt_shown = false;
+    let receipt_shown = launch
+        .as_ref()
+        .is_some_and(|launch| launch.receipt.is_some());
+    if let Some(launch) = launch {
+        app.update_receipt = launch.receipt;
+        if let Some(error) = launch.error {
+            app.report_update_failure(error);
+        }
+    }
     if let Some(guard) = &instance {
         app.set_remote_control(guard);
     }
@@ -1358,7 +1370,10 @@ impl Shell {
                 MenuCommand::Back => Action::Back,
                 MenuCommand::Forward => Action::Forward,
                 MenuCommand::OpenRepo => {
-                    ctx.open_url(egui::OpenUrl::new_tab("https://github.com/crmne/spotifast"));
+                    ctx.open_url(egui::OpenUrl::new_tab(format!(
+                        "https://github.com/{}",
+                        spotifast::updates::CONFIG.repository
+                    )));
                     continue;
                 }
                 // Editing goes through egui, which owns the text field

@@ -34,9 +34,16 @@ class ForkIsolationTests(unittest.TestCase):
                 "-File", str(HERE / "package-mix.ps1"), "-NoBuild",
                 "-BinaryPath", str(binary), "-OutputDirectory", str(root / "output"),
             ], check=True, capture_output=True, text=True)
-            archive = root / "output/spotifast-mix-v1.2.3-windows-portable.zip"
+            stem = "spotifast-mix-v1.2.3-x86_64-pc-windows-msvc"
+            archive = root / f"output/{stem}.zip"
             with zipfile.ZipFile(archive) as package:
-                names = set(package.namelist())
+                # The updater extracts this exact member, and every file is
+                # inside that one version-and-target directory.
+                entries = {name for name in package.namelist() if not name.endswith("/")}
+                self.assertTrue(all(name.startswith(stem + "/") for name in entries))
+                directories = {name for name in package.namelist() if name.endswith("/")}
+                self.assertLessEqual(directories, {stem + "/"})
+                names = {name.removeprefix(stem + "/") for name in entries}
                 self.assertEqual(names, {
                     "spotifast-mix.exe", "LICENSE", "README.md", "Getting started.md",
                     "spotifast-mix-portable.txt",
@@ -46,7 +53,7 @@ class ForkIsolationTests(unittest.TestCase):
                     ("Getting started.md", ROOT / "docs/_reference/spotifast-mix.md"),
                 ]:
                     with self.subTest(document=packaged):
-                        text = package.read(packaged).decode("utf-8").replace("\r\n", "\n")
+                        text = package.read(stem + "/" + packaged).decode("utf-8").replace("\r\n", "\n")
                         # Packaging changes destinations only, preserving all
                         # instructions and link labels from the source guides.
                         link = r"\]\((?:<([^>]+)>|([^()]+))\)"
@@ -58,6 +65,54 @@ class ForkIsolationTests(unittest.TestCase):
                                 self.assertEqual(urlsplit(target).scheme, "https")
                             else:
                                 self.assertIn(unquote(target.split("#", 1)[0]), names)
+
+    def test_own_release_channel_does_not_enable_inherited_publishers(self):
+        workflow = (ROOT / ".github/workflows/mix-release.yml").read_text(encoding="utf-8")
+        self.assertIn("github.repository == 'rotwithme/spotifast-mix'", workflow)
+        self.assertIn("MIX_UPDATE_SIGNING_KEY: ${{ secrets.MIX_UPDATE_SIGNING_KEY }}", workflow)
+        self.assertIn("sign-mix-release.rb --verify", workflow)
+        self.assertIn("--draft", workflow)
+        self.assertIn("Refusing to replace an already published release.", workflow)
+        self.assertNotIn("SPOTIFAST_UPDATE_SIGNING_KEY", workflow)
+        self.assertNotIn("AZURE_", workflow)
+
+    @unittest.skipUnless(shutil.which("ruby"), "requires Ruby OpenSSL")
+    def test_release_signature_binds_the_manifest_to_the_committed_public_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # Disposable keys live only in this process and fixture. The
+            # production signing key is never read by this regression.
+            keygen = """require 'openssl'
+key = OpenSSL::PKey.generate_key('ED25519')
+File.binwrite(ARGV[0], key.private_to_pem)
+File.write(ARGV[1], OpenSSL::ASN1.decode(key.public_to_der).value[1].value.unpack1('H*') + "\\n")
+"""
+            subprocess.run(["ruby", "-e", keygen, str(root / "dummy.pem"), str(root / "public.hex")],
+                           check=True, capture_output=True)
+            package = root / "spotifast-mix-v1.2.3-x86_64-pc-windows-msvc.zip"
+            package.write_bytes(b"dummy portable release")
+            import hashlib
+            manifest = root / "checksums.txt"
+            manifest.write_bytes((hashlib.sha256(package.read_bytes()).hexdigest()
+                                  + "  " + package.name + "\n").encode())
+            command = ["ruby", str(HERE / "sign-mix-release.rb")]
+            env = dict(os.environ, MIX_UPDATE_SIGNING_KEY=(root / "dummy.pem").read_text())
+            subprocess.run(command + [str(manifest), str(root / "public.hex")],
+                           env=env, check=True, capture_output=True)
+            self.assertEqual((root / "checksums.txt.sig").stat().st_size, 64)
+            subprocess.run(command + ["--verify", str(manifest), str(root / "public.hex")],
+                           check=True, capture_output=True)
+            # A different committed key must never authorize signing.
+            (root / "wrong.hex").write_text("00" * 32)
+            failure = subprocess.run(command + [str(manifest), str(root / "wrong.hex")],
+                                     env=env, capture_output=True, text=True)
+            self.assertNotEqual(failure.returncode, 0)
+            self.assertIn("does not match", failure.stderr)
+            self.assertNotIn(env["MIX_UPDATE_SIGNING_KEY"], failure.stderr)
+            package.write_bytes(b"changed bytes")
+            failure = subprocess.run(command + ["--verify", str(manifest), str(root / "public.hex")],
+                                     capture_output=True)
+            self.assertNotEqual(failure.returncode, 0)
 
     def test_inherited_installer_builder_stops_before_touching_a_payload(self):
         spec = importlib.util.spec_from_file_location("mix_msi", HERE / "build-msi.py")
