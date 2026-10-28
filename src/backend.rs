@@ -3416,7 +3416,7 @@ impl Worker {
 
     /// Cancels in-flight account work and drops cached Home data on sign-out.
     fn sign_out(&mut self) {
-        self.integration.runtime.set_spotify_session(None);
+        self.integration.set_spotify_session(None);
         self.spotify_restore_started = true;
         self.cancel_search();
         self.signed_in = false;
@@ -3964,7 +3964,7 @@ impl Worker {
                     self.schedule_resume_check(1_500);
                 }
                 self.engine = Some(engine);
-                self.integration.runtime.set_spotify_session(
+                self.integration.set_spotify_session(
                     self.engine.as_ref().map(|engine| engine.session().clone()),
                 );
                 self.start_rootlist();

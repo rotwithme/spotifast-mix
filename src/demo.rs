@@ -5087,6 +5087,115 @@ mod tests {
     }
 
     #[test]
+    fn local_playlist_bulk_menus_keep_selected_copies_and_offer_whole_playlist_import() {
+        use crate::integration::Action as MixAction;
+        use egui::accesskit::{Action as AccessibleAction, Role};
+
+        for whole_playlist in [false, true] {
+            for create_new in [false, true] {
+                let (ctx, mut app) =
+                    accessible_app(&format!("local-bulk-menu-{whole_playlist}-{create_new}"));
+                app.backend.set_offline(true);
+                app.integration.local_ready = true;
+                app.integration
+                    .local
+                    .playlists
+                    .push(crate::mix::MixedPlaylist {
+                        id: 7,
+                        name: "My local songs".into(),
+                        items: vec![],
+                    });
+                let songs = [2, 0, 2]
+                    .map(|index| PlayableItem::Track(track(index)))
+                    .to_vec();
+                let draw = |app: &mut App, events| {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(760.0, 620.0),
+                            )),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            if whole_playlist {
+                                crate::ui::widgets::context_menu_items(
+                                    ui,
+                                    app,
+                                    "spotify:playlist:source",
+                                    "Source playlist",
+                                    None,
+                                );
+                            } else {
+                                crate::ui::widgets::picked_menu(ui, app, &songs, &[], None);
+                            }
+                        },
+                    );
+                    output.textures_delta.clear();
+                    output.platform_output.accesskit_update.unwrap()
+                };
+                draw(&mut app, vec![]);
+                let tree = draw(&mut app, vec![]);
+                let menu = accessible_node(
+                    &tree,
+                    if whole_playlist {
+                        "Merge into local playlist"
+                    } else {
+                        "Add to local playlist"
+                    },
+                    Role::Button,
+                );
+                draw(
+                    &mut app,
+                    vec![accessible_action(menu, AccessibleAction::Click, None)],
+                );
+                let tree = draw(&mut app, vec![]);
+                let target = accessible_node(
+                    &tree,
+                    if create_new {
+                        "New local playlist"
+                    } else {
+                        "My local songs"
+                    },
+                    Role::Button,
+                );
+                app.actions.clear();
+                draw(
+                    &mut app,
+                    vec![accessible_action(target, AccessibleAction::Click, None)],
+                );
+                let expected = songs
+                    .iter()
+                    .map(|item| crate::mix::MediaRef::Spotify(item.uri().to_string()))
+                    .collect::<Vec<_>>();
+                match app.actions.as_slice() {
+                    [
+                        Action::Integration(MixAction::ImportSpotifyPlaylist { uri, name, target }),
+                    ] if whole_playlist => {
+                        assert_eq!(uri, "spotify:playlist:source");
+                        assert_eq!(name, "Source playlist");
+                        assert_eq!(*target, (!create_new).then_some(7));
+                    }
+                    [Action::Integration(MixAction::CreateLocalWithItems { items, .. })]
+                        if !whole_playlist && create_new =>
+                    {
+                        assert_eq!(items, &expected)
+                    }
+                    [Action::Integration(MixAction::AddLocal { id, items })]
+                        if !whole_playlist && !create_new =>
+                    {
+                        assert_eq!(*id, 7);
+                        assert_eq!(items, &expected);
+                    }
+                    actions => panic!("unexpected bulk menu actions: {actions:?}"),
+                }
+                app.backend.shutdown();
+            }
+        }
+    }
+
+    #[test]
     fn playlist_submenu_keeps_typing_and_resets_after_the_parent_closes() {
         use egui::accesskit::{Action, Role};
         let (ctx, mut app) = accessible_app("playlist-submenu");

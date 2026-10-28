@@ -59,6 +59,22 @@ to either service. Spotify playlists accept Spotify songs, and SoundCloud playli
 accept SoundCloud songs. Inaccessible tracks stay identifiable as unavailable
 entries rather than being replaced by another recording.
 
+To add songs together, select Spotify rows with Ctrl-click or Shift-click,
+right-click a selected row, and choose **Add to local playlist**. SoundCloud
+and local song lists have checkboxes and **Select all**. Choose an existing local
+playlist or **New local playlist**. Songs are added in displayed order, including
+repeated occurrences.
+
+Right-click a Spotify playlist in the sidebar, search, or Music Library and
+choose **Merge into local playlist**. The app reads every page, checks that the
+source playlist stayed unchanged, and appends the complete result to the chosen
+local playlist, or creates a local copy with the source name. Progress and
+**Cancel import** appear in Music. A failed or canceled import adds nothing;
+retry the merge after resolving the reported problem. Spotify local-file entries
+and rows without a usable song reference prevent a complete import and are
+reported instead of silently omitted. Later changes to the Spotify playlist
+are not automatically synchronized with its local copy.
+
 ## Spotify Connect and Local mix
 
 The player has independent **Spotify Connect** and **Local mix** sessions.

@@ -65,6 +65,16 @@ pub enum Action {
         items: Vec<String>,
     },
     CreateLocal(String),
+    CreateLocalWithItems {
+        name: String,
+        items: Vec<mix::MediaRef>,
+    },
+    ImportSpotifyPlaylist {
+        uri: String,
+        name: String,
+        target: Option<u64>,
+    },
+    CancelSpotifyImport,
     RenameLocal {
         id: u64,
         name: String,
@@ -96,6 +106,12 @@ pub enum Action {
 pub enum Request {
     Restore,
     LoadLocal,
+    ImportSpotifyPlaylist {
+        uri: String,
+        serial: u64,
+        account: String,
+    },
+    CancelSpotifyImport,
     SignIn(soundcloud::AppCredentials),
     CancelSignIn,
     Disconnect,
@@ -156,6 +172,11 @@ pub enum Request {
 }
 
 pub enum Event {
+    SpotifyPlaylistImported {
+        serial: u64,
+        account: String,
+        result: Result<Vec<mix::MediaRef>, String>,
+    },
     Auth {
         generation: u64,
         result: Result<Option<soundcloud::User>, String>,
@@ -326,6 +347,7 @@ pub struct State {
     pub forget_art_pending: bool,
     pub local: LocalPlaylists,
     pub local_ready: bool,
+    pub spotify_import: Option<SpotifyImport>,
     pub session_writable: bool,
     pub session_authorized: bool,
     pub local_error: Option<String>,
@@ -386,6 +408,7 @@ impl Default for State {
             forget_art_pending: false,
             local: LocalPlaylists::default(),
             local_ready: false,
+            spotify_import: None,
             session_writable: false,
             session_authorized: false,
             local_error: None,
@@ -408,6 +431,14 @@ impl Default for State {
         }
     }
 }
+
+/// The destination is fixed at invocation, even if the user navigates away.
+pub struct SpotifyImport {
+    pub serial: u64,
+    pub name: String,
+    pub target: Option<u64>,
+    pub account: String,
+}
 impl State {
     pub fn next_serial(&mut self) -> u64 {
         self.serial = self.serial.wrapping_add(1);
@@ -423,6 +454,7 @@ enum ReadKind {
     Playlist,
     Resolve,
     Local,
+    SpotifyImport,
 }
 
 struct MutationJob {
@@ -436,6 +468,8 @@ pub struct Worker {
     pub mutations: Http,
     api: Arc<crate::api::ApiGateway>,
     generation: Arc<AtomicU64>,
+    spotify_generation: Arc<AtomicU64>,
+    spotify_session: Option<librespot_core::session::Session>,
     cancel_signin: Option<tokio::sync::watch::Sender<bool>>,
     account_ready: tokio::sync::watch::Sender<bool>,
     reads: HashMap<ReadKind, tokio::task::JoinHandle<()>>,
@@ -491,6 +525,8 @@ impl Worker {
             mutations,
             api,
             generation,
+            spotify_generation: Arc::new(AtomicU64::new(0)),
+            spotify_session: None,
             cancel_signin: None,
             account_ready,
             reads: HashMap::new(),
@@ -501,9 +537,73 @@ impl Worker {
         }
     }
 
+    pub fn set_spotify_session(&mut self, session: Option<librespot_core::session::Session>) {
+        if session.is_none() {
+            self.cancel_spotify_import();
+        }
+        self.spotify_session = session.clone();
+        self.runtime.set_spotify_session(session);
+    }
+
+    fn cancel_spotify_import(&mut self) {
+        self.spotify_generation.fetch_add(1, Ordering::SeqCst);
+        if let Some(task) = self.reads.remove(&ReadKind::SpotifyImport) {
+            task.abort();
+        }
+    }
+
     pub fn handle(&mut self, request: Request) {
         if let Request::Mix { serial, command } = request {
             self.runtime.send_with_serial(serial, command);
+            return;
+        }
+        if matches!(&request, Request::CancelSpotifyImport) {
+            self.cancel_spotify_import();
+            return;
+        }
+        if let Request::ImportSpotifyPlaylist {
+            uri,
+            serial,
+            account,
+        } = request
+        {
+            self.cancel_spotify_import();
+            let generation = self.spotify_generation.load(Ordering::SeqCst);
+            let guard = SpotifyImportGuard::new(
+                Arc::clone(&self.api),
+                Arc::clone(&self.spotify_generation),
+                generation,
+                account.clone(),
+            );
+            let session = self.spotify_session.clone();
+            let notify = Arc::clone(&self.notify);
+            let task = tokio::spawn(async move {
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_secs(300),
+                    import_spotify_playlist(&uri, session.as_ref(), &guard),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    Err("The Spotify playlist took too long to load. Try again.".into())
+                });
+                // Cancellation and account replacement cannot publish an old snapshot.
+                if guard.generation.load(Ordering::SeqCst) == generation {
+                    let result = if guard.current() {
+                        result
+                    } else {
+                        Err(
+                            "The Spotify account changed while importing. Add the playlist again."
+                                .into(),
+                        )
+                    };
+                    notify(Event::SpotifyPlaylistImported {
+                        serial,
+                        account,
+                        result,
+                    });
+                }
+            });
+            self.reads.insert(ReadKind::SpotifyImport, task);
             return;
         }
         if matches!(
@@ -518,7 +618,7 @@ impl Worker {
             // Every old account read is cancelled. Local files are independent
             // of account identity and continue loading.
             self.reads.retain(|kind, task| {
-                if *kind == ReadKind::Local {
+                if matches!(kind, ReadKind::Local | ReadKind::SpotifyImport) {
                     true
                 } else {
                     task.abort();
@@ -826,13 +926,248 @@ fn spotify_resource(uri: &str) -> Option<(&str, &str)> {
     (id.len() == 22 && id.bytes().all(|byte| byte.is_ascii_alphanumeric())).then_some((kind, id))
 }
 
-fn valid_media_ref(item: &mix::MediaRef) -> bool {
+pub(crate) fn valid_media_ref(item: &mix::MediaRef) -> bool {
     match item {
         mix::MediaRef::Spotify(uri) => spotify_resource(uri).is_some(),
         mix::MediaRef::SoundCloud(urn) => urn
             .strip_prefix("soundcloud:tracks:")
             .is_some_and(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit())),
     }
+}
+
+struct SpotifyImportGuard {
+    api: Arc<crate::api::ApiGateway>,
+    generation: Arc<AtomicU64>,
+    expected_generation: u64,
+    account: String,
+    clients: [Arc<crate::api::ApiClient>; 2],
+}
+
+impl SpotifyImportGuard {
+    fn new(
+        api: Arc<crate::api::ApiGateway>,
+        generation: Arc<AtomicU64>,
+        expected_generation: u64,
+        account: String,
+    ) -> Self {
+        use crate::api::ApiSource;
+        let clients = [
+            api.verification_client(ApiSource::Shared),
+            api.verification_client(ApiSource::Personal),
+        ];
+        Self {
+            api,
+            generation,
+            expected_generation,
+            account,
+            clients,
+        }
+    }
+
+    fn current(&self) -> bool {
+        use crate::api::ApiSource;
+        self.generation.load(Ordering::SeqCst) == self.expected_generation
+            && self
+                .api
+                .account()
+                .is_some_and(|account| account.as_str() == self.account)
+            && [ApiSource::Shared, ApiSource::Personal]
+                .into_iter()
+                .zip(&self.clients)
+                .all(|(source, client)| Arc::ptr_eq(client, &self.api.verification_client(source)))
+    }
+
+    fn check(&self) -> Result<(), String> {
+        self.current().then_some(()).ok_or_else(|| {
+            "The Spotify account changed while importing. Add the playlist again.".into()
+        })
+    }
+}
+
+const MAX_SPOTIFY_IMPORT: u32 = 100_000;
+
+fn spotify_import_reference(uri: &str, index: usize) -> Result<mix::MediaRef, String> {
+    if spotify_resource(uri).is_some() {
+        Ok(mix::MediaRef::Spotify(uri.into()))
+    } else if uri.starts_with("spotify:local:") {
+        Err(format!(
+            "Song {} is a Spotify local file, which Local mix cannot import. Nothing was added.",
+            index + 1
+        ))
+    } else {
+        Err(format!(
+            "Spotify did not provide a song reference for row {}. Nothing was added. Try refreshing the source playlist.",
+            index + 1
+        ))
+    }
+}
+
+/// Read every positional row, including unavailable songs and duplicate occurrences.
+/// An incomplete or unsupported row invalidates the whole snapshot.
+async fn collect_spotify_pages<F, Fut>(
+    total: u32,
+    mut fetch: F,
+) -> Result<Vec<mix::MediaRef>, String>
+where
+    F: FnMut(u32) -> Fut,
+    Fut: std::future::Future<
+            Output = Result<crate::api::models::Page<crate::api::models::PlaylistItem>, String>,
+        >,
+{
+    if total > MAX_SPOTIFY_IMPORT {
+        return Err("This Spotify playlist is too large to import. Nothing was added.".into());
+    }
+    let mut items = Vec::with_capacity(total as usize);
+    while items.len() < total as usize {
+        let page = fetch(items.len() as u32).await?;
+        if page.offset != items.len() as u32
+            || page.total != total
+            || page.items.is_empty()
+            || page.items.len() > 50
+            || items.len() + page.items.len() > total as usize
+        {
+            return Err("The Spotify playlist changed or was incomplete while loading. Nothing was added. Try again.".into());
+        }
+        for row in page.items {
+            let uri = row.playable().map(|item| item.uri()).unwrap_or_default();
+            if row.is_local {
+                return Err(format!(
+                    "Song {} is a Spotify local file, which Local mix cannot import. Nothing was added.",
+                    items.len() + 1
+                ));
+            }
+            items.push(spotify_import_reference(uri, items.len())?);
+        }
+        if page.next.is_some() != (items.len() < total as usize) {
+            return Err(
+                "Spotify did not return the complete playlist. Nothing was added. Try again."
+                    .into(),
+            );
+        }
+    }
+    Ok(items)
+}
+
+fn same_spotify_snapshot(
+    before: &crate::api::models::Playlist,
+    after: &crate::api::models::Playlist,
+    count: usize,
+) -> bool {
+    before
+        .snapshot_id
+        .as_ref()
+        .is_some_and(|snapshot| !snapshot.is_empty())
+        && before.snapshot_id == after.snapshot_id
+        && before.track_total() == after.track_total()
+        && before.track_total() as usize == count
+        && before.id == after.id
+}
+
+async fn import_spotify_playlist(
+    uri: &str,
+    session: Option<&librespot_core::session::Session>,
+    guard: &SpotifyImportGuard,
+) -> Result<Vec<mix::MediaRef>, String> {
+    use crate::api::Operation;
+    let id = uri
+        .strip_prefix("spotify:playlist:")
+        .filter(|id| id.len() == 22 && id.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+        .ok_or_else(|| "Choose a Spotify playlist to import.".to_string())?;
+    guard.check()?;
+    let access = guard.api.playlist_access(id);
+    if guard.api.session_serves(Operation::PlaylistItems(access))
+        && let Some(session) = session.filter(|session| session.username() == guard.account)
+    {
+        // Use the same account's session for playlists a personal Web API app
+        // cannot read. No metadata filtering may drop an unavailable row here.
+        let snapshot = async {
+            let before = crate::session_reads::playlist(session, id)
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+            if before.track_total() > MAX_SPOTIFY_IMPORT {
+                return Err(
+                    "This Spotify playlist is too large to import. Nothing was added.".into(),
+                );
+            }
+            let (revision, uris) = crate::session_reads::playlist_uris(session, id)
+                .await
+                .map_err(|error| error.to_string())?;
+            let after = crate::session_reads::playlist(session, id)
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+            guard.check()?;
+            use base64::Engine as _;
+            if !same_spotify_snapshot(&before, &after, uris.len())
+                || before.snapshot_id.as_deref()
+                    != Some(
+                        base64::engine::general_purpose::STANDARD_NO_PAD
+                            .encode(revision)
+                            .as_str(),
+                    )
+            {
+                return Err(
+                    "The Spotify playlist changed while loading. Nothing was added. Try again."
+                        .into(),
+                );
+            }
+            uris.iter()
+                .enumerate()
+                .map(|(index, uri)| spotify_import_reference(uri, index))
+                .collect()
+        };
+        if let Ok(Ok(items)) =
+            tokio::time::timeout(std::time::Duration::from_secs(30), snapshot).await
+        {
+            return Ok(items);
+        }
+        // A failed read can safely try the existing Web API route. The
+        // fallback itself must still return one complete, stable snapshot.
+        guard.check()?;
+    }
+    let client = guard
+        .api
+        .client_for(Operation::PlaylistMetadata(access))
+        .await
+        .map_err(|error| error.to_string())?;
+    guard.check()?;
+    let before = client
+        .playlist(id)
+        .await
+        .map_err(|error| error.to_string())?;
+    guard.check()?;
+    if before.id != id || before.tracks.is_none() && before.items_count.is_none() {
+        return Err("Spotify did not provide the complete playlist. Nothing was added.".into());
+    }
+    guard.api.observe_playlist(&before);
+    let client = guard
+        .api
+        .client_for(Operation::PlaylistItems(guard.api.playlist_access(id)))
+        .await
+        .map_err(|error| error.to_string())?;
+    let items = collect_spotify_pages(before.track_total(), |offset| {
+        let client = Arc::clone(&client);
+        async move {
+            guard.check()?;
+            let page = client
+                .playlist_items(id, offset, 50)
+                .await
+                .map_err(|error| error.to_string())?;
+            guard.check()?;
+            Ok(page)
+        }
+    })
+    .await?;
+    let after = client
+        .playlist(id)
+        .await
+        .map_err(|error| error.to_string())?;
+    guard.check()?;
+    if !same_spotify_snapshot(&before, &after, items.len()) {
+        return Err(
+            "The Spotify playlist changed while loading. Nothing was added. Try again.".into(),
+        );
+    }
+    Ok(items)
 }
 
 fn decode_session(bytes: &[u8]) -> Result<mix::MixSession, String> {
@@ -1022,6 +1357,76 @@ async fn resolve_one(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn bulk_spotify_snapshot_preserves_pages_duplicates_and_unavailable_references() {
+        use crate::api::models::{Page, PlayableItem, Playlist, PlaylistItem, Track, TrackCount};
+        let uri = "spotify:track:1234567890abcdefghijkl";
+        let row = PlaylistItem {
+            item: Some(PlayableItem::Track(Track {
+                uri: uri.into(),
+                is_playable: Some(false),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let mut pages = std::collections::VecDeque::from([
+            Page {
+                items: vec![row.clone(), row.clone()],
+                offset: 0,
+                total: 3,
+                limit: 2,
+                next: Some("next".into()),
+            },
+            Page {
+                items: vec![row.clone()],
+                offset: 2,
+                total: 3,
+                limit: 2,
+                next: None,
+            },
+        ]);
+        let imported = collect_spotify_pages(3, |offset| {
+            let page = pages.pop_front().unwrap();
+            assert_eq!(page.offset, offset);
+            std::future::ready(Ok(page))
+        })
+        .await
+        .unwrap();
+        assert_eq!(imported, vec![mix::MediaRef::Spotify(uri.into()); 3]);
+        for bad in [
+            PlaylistItem::default(),
+            PlaylistItem {
+                is_local: true,
+                ..row.clone()
+            },
+        ] {
+            let result = collect_spotify_pages(2, |_| {
+                std::future::ready(Ok(Page::whole(vec![row.clone(), bad.clone()])))
+            })
+            .await;
+            assert!(result.unwrap_err().contains("Nothing was added"));
+        }
+        let changed = collect_spotify_pages(2, |_| {
+            std::future::ready(Ok(Page::whole(vec![row.clone()])))
+        })
+        .await;
+        assert!(changed.is_err());
+        let before = Playlist {
+            id: "source".into(),
+            snapshot_id: Some("first".into()),
+            tracks: Some(TrackCount {
+                total: 3,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut after = before.clone();
+        assert!(same_spotify_snapshot(&before, &after, 3));
+        after.snapshot_id = Some("changed".into());
+        assert!(!same_spotify_snapshot(&before, &after, 3));
+    }
+
     #[test]
     fn future_playlist_versions_are_preserved() {
         assert!(LocalPlaylists::decode(br#"{"version":2,"next_id":1,"playlists":[]}"#).is_err());

@@ -204,6 +204,90 @@ impl App {
         self.integration.resolve_serial = self.integration.next_serial();
     }
 
+    pub(crate) fn cancel_spotify_import(&mut self) {
+        if self.integration.spotify_import.take().is_some() {
+            self.integration.notice = None;
+        }
+        self.integration_request(Request::CancelSpotifyImport);
+    }
+
+    fn create_local_with_items(&mut self, name: String, items: Vec<MediaRef>) -> bool {
+        if !self.valid_local_additions(&items) || name.trim().is_empty() {
+            return false;
+        }
+        let id = self.integration.local.next_id;
+        if id == 0 || id >= u64::MAX - 1 {
+            self.integration.error = Some("Local playlist identities have been exhausted.".into());
+            return false;
+        }
+        self.integration.local.next_id = id + 1;
+        let metadata_items = items.clone();
+        self.integration
+            .local
+            .playlists
+            .push(crate::mix::MixedPlaylist {
+                id,
+                name: name.trim().into(),
+                items,
+            });
+        self.cancel_mix_resolution();
+        self.integration.view = View::LocalPlaylist(id);
+        self.integration.draft_name.clear();
+        self.integration.resolved_items.clear();
+        self.open(Page::Mix);
+        self.persist_local_playlists();
+        if !metadata_items.is_empty() {
+            self.resolve_mix_items(metadata_items, false, Some(id));
+        }
+        true
+    }
+
+    fn valid_local_additions(&mut self, items: &[MediaRef]) -> bool {
+        if !self.integration.local_ready {
+            self.integration.error =
+                Some("Local playlists are not ready. Nothing was added.".into());
+            return false;
+        }
+        if items
+            .iter()
+            .any(|item| !crate::integration::valid_media_ref(item))
+        {
+            self.integration.error = Some(
+                "The selection contains an unsupported song reference. Nothing was added.".into(),
+            );
+            return false;
+        }
+        true
+    }
+
+    fn add_local_items(&mut self, id: u64, items: Vec<MediaRef>) -> bool {
+        if !self.valid_local_additions(&items) {
+            return false;
+        }
+        let Some(playlist) = self
+            .integration
+            .local
+            .playlists
+            .iter_mut()
+            .find(|playlist| playlist.id == id)
+        else {
+            self.integration.notice = None;
+            self.integration.error = Some(
+                "That local playlist was deleted. Choose another playlist and add the songs again."
+                    .into(),
+            );
+            return false;
+        };
+        playlist.items.extend(items);
+        let updated = playlist.items.clone();
+        self.persist_local_playlists();
+        if self.integration.view == View::LocalPlaylist(id) && !self.integration.resolving_play {
+            self.resolve_mix_items(updated, false, Some(id));
+        }
+        self.integration.notice = Some("Added to local playlist".into());
+        true
+    }
+
     fn resolve_mix_items(&mut self, items: Vec<MediaRef>, play: bool, target: Option<u64>) {
         self.cancel_mix_resolution();
         let serial = self.integration.next_serial();
@@ -633,24 +717,55 @@ impl App {
                 self.integration_request(Request::Append { urn, items, serial });
             }
             MixAction::CreateLocal(name) => {
-                if !self.integration.local_ready || name.trim().is_empty() {
+                self.create_local_with_items(name, Vec::new());
+            }
+            MixAction::CreateLocalWithItems { name, items } => {
+                self.create_local_with_items(name, items);
+            }
+            MixAction::ImportSpotifyPlaylist { uri, name, target } => {
+                if !self.valid_local_additions(&[]) {
                     return;
                 }
-                let id = self.integration.local.next_id;
-                self.integration.local.next_id = id.saturating_add(1);
-                self.integration
-                    .local
-                    .playlists
-                    .push(crate::mix::MixedPlaylist {
-                        id,
-                        name: name.trim().into(),
-                        items: Vec::new(),
-                    });
-                self.integration.view = View::LocalPlaylist(id);
-                self.integration.draft_name.clear();
-                self.integration.resolved_items.clear();
-                self.persist_local_playlists();
+                let Some(account) = self
+                    .user_id()
+                    .filter(|_| self.is_connected())
+                    .map(str::to_string)
+                else {
+                    self.integration.error =
+                        Some("Connect Spotify before importing a playlist.".into());
+                    return;
+                };
+                if target.is_some_and(|id| {
+                    !self
+                        .integration
+                        .local
+                        .playlists
+                        .iter()
+                        .any(|playlist| playlist.id == id)
+                }) {
+                    self.integration.error =
+                        Some("That local playlist was deleted. Choose another playlist.".into());
+                    return;
+                }
+                let serial = self.integration.next_serial();
+                self.integration.error = None;
+                self.apply_integration(MixAction::Open(
+                    target.map_or(View::Library, View::LocalPlaylist),
+                ));
+                self.integration.spotify_import = Some(crate::integration::SpotifyImport {
+                    serial,
+                    name,
+                    target,
+                    account: account.clone(),
+                });
+                self.integration.notice = Some("Loading the complete Spotify playlist…".into());
+                self.integration_request(Request::ImportSpotifyPlaylist {
+                    uri,
+                    serial,
+                    account,
+                });
             }
+            MixAction::CancelSpotifyImport => self.cancel_spotify_import(),
             MixAction::RenameLocal { id, name } => {
                 if let Some(playlist) = self
                     .integration
@@ -665,6 +780,14 @@ impl App {
                 self.persist_local_playlists();
             }
             MixAction::DeleteLocal(id) => {
+                if self
+                    .integration
+                    .spotify_import
+                    .as_ref()
+                    .is_some_and(|pending| pending.target == Some(id))
+                {
+                    self.cancel_spotify_import();
+                }
                 if self.integration.resolve_target == Some(id) {
                     self.cancel_mix_resolution();
                 }
@@ -674,23 +797,7 @@ impl App {
                 self.persist_local_playlists();
             }
             MixAction::AddLocal { id, items } => {
-                if let Some(playlist) = self
-                    .integration
-                    .local
-                    .playlists
-                    .iter_mut()
-                    .find(|p| p.id == id)
-                {
-                    playlist.items.extend(items);
-                    self.persist_local_playlists();
-                    self.integration.notice = Some("Added to local playlist".into());
-                } else {
-                    self.integration.notice = None;
-                    self.integration.error = Some(
-                        "That local playlist was deleted. Choose another playlist and add the songs again."
-                            .into(),
-                    );
-                }
+                self.add_local_items(id, items);
             }
             MixAction::RemoveLocal { id, index } => {
                 if let Some(playlist) = self
@@ -774,6 +881,44 @@ impl App {
     pub(crate) fn handle_integration_event(&mut self, event: MixEvent) {
         self.mark_soundcloud_art(&event);
         match event {
+            MixEvent::SpotifyPlaylistImported {
+                serial,
+                account,
+                result,
+            } => {
+                if !self
+                    .integration
+                    .spotify_import
+                    .as_ref()
+                    .is_some_and(|pending| pending.serial == serial && pending.account == account)
+                {
+                    return;
+                }
+                let pending = self
+                    .integration
+                    .spotify_import
+                    .take()
+                    .expect("matching import");
+                self.integration.notice = None;
+                if !self.is_connected() || self.user_id() != Some(account.as_str()) {
+                    return;
+                }
+                match result {
+                    Ok(items) => {
+                        let count = items.len();
+                        let applied = match pending.target {
+                            Some(id) => self.add_local_items(id, items),
+                            None => self.create_local_with_items(pending.name, items),
+                        };
+                        if applied {
+                            self.integration.notice = Some(format!(
+                                "Added {count} songs from Spotify to the local playlist"
+                            ));
+                        }
+                    }
+                    Err(error) => self.integration.error = Some(error),
+                }
+            }
             MixEvent::SessionPersistence { writable, message } => {
                 self.integration.session_writable = writable || self.integration.session_authorized;
                 if !self.integration.session_authorized
@@ -1372,6 +1517,99 @@ impl App {
 mod tests {
     use super::*;
 
+    #[test]
+    fn bulk_local_additions_keep_occurrences_and_reject_the_whole_invalid_selection() {
+        let mut app = app("bulk-local-additions");
+        let spotify = MediaRef::Spotify("spotify:track:1234567890abcdefghijkl".into());
+        let soundcloud = MediaRef::SoundCloud("soundcloud:tracks:99".into());
+        let items = vec![spotify.clone(), soundcloud, spotify];
+        app.apply_integration(MixAction::CreateLocalWithItems {
+            name: "Imported".into(),
+            items: items.clone(),
+        });
+        let id = app.integration.local.playlists[0].id;
+        assert_eq!(app.integration.local.playlists[0].items, items);
+        assert_eq!(app.integration.view, View::LocalPlaylist(id));
+        let revision = app.integration.local_revision;
+        app.apply_integration(MixAction::AddLocal {
+            id,
+            items: vec![
+                items[0].clone(),
+                MediaRef::Spotify("spotify:local:unsupported".into()),
+            ],
+        });
+        assert_eq!(app.integration.local.playlists[0].items, items);
+        assert_eq!(app.integration.local_revision, revision);
+        assert!(
+            app.integration
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("Nothing was added")
+        );
+        app.apply_integration(MixAction::CreateLocalWithItems {
+            name: "Invalid".into(),
+            items: vec![MediaRef::SoundCloud("https://invalid.example/song".into())],
+        });
+        assert_eq!(app.integration.local.playlists.len(), 1);
+    }
+
+    #[test]
+    fn bulk_playlist_import_ignores_stale_canceled_and_deleted_destinations() {
+        let mut app = app("bulk-import-fences");
+        app.auth = AuthStatus::Connected {
+            username: "alice".into(),
+        };
+        app.user = Some(crate::api::models::User {
+            id: "alice".into(),
+            ..Default::default()
+        });
+        app.apply_integration(MixAction::CreateLocal("Destination".into()));
+        let id = app.integration.local.playlists[0].id;
+        let items = vec![MediaRef::Spotify("spotify:track:1234567890abcdefghijkl".into()); 2];
+        let pending = |serial| crate::integration::SpotifyImport {
+            serial,
+            name: "Source".into(),
+            target: Some(id),
+            account: "alice".into(),
+        };
+        let event = |serial| MixEvent::SpotifyPlaylistImported {
+            serial,
+            account: "alice".into(),
+            result: Ok(items.clone()),
+        };
+        app.integration.spotify_import = Some(pending(20));
+        app.handle_integration_event(event(19));
+        assert!(app.integration.local.playlists[0].items.is_empty());
+        assert_eq!(app.integration.spotify_import.as_ref().unwrap().serial, 20);
+        app.handle_integration_event(event(20));
+        assert_eq!(app.integration.local.playlists[0].items, items);
+        let revision = app.integration.local_revision;
+        app.handle_integration_event(event(20));
+        assert_eq!(app.integration.local_revision, revision);
+        app.integration.spotify_import = Some(pending(21));
+        app.cancel_spotify_import();
+        app.handle_integration_event(event(21));
+        assert_eq!(app.integration.local_revision, revision);
+        app.integration.spotify_import = Some(pending(22));
+        app.user.as_mut().unwrap().id = "bob".into();
+        app.handle_integration_event(event(22));
+        assert_eq!(app.integration.local_revision, revision);
+        app.user.as_mut().unwrap().id = "alice".into();
+        app.integration.spotify_import = Some(pending(23));
+        app.integration.local.playlists.clear();
+        app.handle_integration_event(event(23));
+        assert!(app.integration.local.playlists.is_empty());
+        assert_eq!(app.integration.local_revision, revision);
+        assert!(
+            app.integration
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("deleted")
+        );
+    }
+
     fn app(name: &str) -> App {
         let mut app = super::super::tests::test_app(name);
         app.offline = true;
@@ -1864,12 +2102,12 @@ mod tests {
         app.apply_integration(MixAction::AddLocal {
             id,
             items: vec![
-                MediaRef::SoundCloud("soundcloud:tracks:blocked".into()),
-                MediaRef::SoundCloud("soundcloud:tracks:playable".into()),
+                MediaRef::SoundCloud("soundcloud:tracks:1".into()),
+                MediaRef::SoundCloud("soundcloud:tracks:2".into()),
             ],
         });
         app.apply_integration(MixAction::PlayLocal(id));
-        let mut blocked = soundcloud("soundcloud:tracks:blocked");
+        let mut blocked = soundcloud("soundcloud:tracks:1");
         if let MediaItem::SoundCloud(track) = &mut blocked {
             track.access = crate::soundcloud::Access::Blocked;
         }
@@ -1877,7 +2115,7 @@ mod tests {
             generation: 0,
             serial: app.integration.resolve_serial,
             play: true,
-            result: Ok(vec![blocked, soundcloud("soundcloud:tracks:playable")]),
+            result: Ok(vec![blocked, soundcloud("soundcloud:tracks:2")]),
         });
         assert_eq!(app.integration.resolved_items.len(), 2);
         assert_eq!(app.integration.local.playlists[0].items.len(), 2);
@@ -1889,7 +2127,7 @@ mod tests {
                 .unwrap()
                 .item
                 .media_ref(),
-            MediaRef::SoundCloud("soundcloud:tracks:playable".into())
+            MediaRef::SoundCloud("soundcloud:tracks:2".into())
         );
     }
 

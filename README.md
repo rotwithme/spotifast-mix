@@ -14,6 +14,8 @@ SoundCloud's official API. Songs always show their original service.
 - Connect either account independently. Spotify playback requires Spotify Premium.
 - Browse SoundCloud likes and playlists, like or unlike tracks, and edit playlists you own.
 - Create local playlists containing songs from both services.
+- Add selected songs to a new or existing local playlist. Right-click a Spotify
+  playlist and choose **Merge into local playlist** to copy its complete contents.
 - Play a mixed queue on this computer through **Local mix**, or use the existing
   **Spotify Connect** player. Their queues remain independent.
 

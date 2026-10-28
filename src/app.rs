@@ -2783,6 +2783,9 @@ impl App {
     }
 
     fn handle_auth(&mut self, status: AuthStatus) {
+        if matches!(status, AuthStatus::Connected { .. } | AuthStatus::SignedOut) {
+            self.cancel_spotify_import();
+        }
         match &status {
             AuthStatus::Connected { .. } => {
                 self.sign_in_url = None;
@@ -11828,6 +11831,7 @@ impl App {
                 });
             }
             Action::SignOut => {
+                self.cancel_spotify_import();
                 self.backend.send(Command::SignOut);
                 self.show_friends_panel = false;
                 self.history = vec![Page::Home];

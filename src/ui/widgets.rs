@@ -767,6 +767,20 @@ pub fn picked_menu(
         });
     }
     add_to_playlist_menu(ui, app, songs);
+    let local_items = songs
+        .iter()
+        .map(|item| crate::mix::MediaRef::Spotify(item.uri().to_string()))
+        .collect::<Vec<_>>();
+    let supported = songs.iter().all(|item| {
+        (item.uri().starts_with("spotify:track:") || item.uri().starts_with("spotify:episode:"))
+            && !matches!(item, PlayableItem::Track(track) if track.is_local)
+    });
+    ui.add_enabled_ui(supported, |ui| {
+        super::mix::add_to_local_playlist_menu(app, ui, &local_items);
+    });
+    if !supported {
+        ui.weak("Local file entries cannot be added to a mixed playlist.");
+    }
 }
 
 fn add_to_playlist_menu(ui: &mut Ui, app: &mut App, items: &[PlayableItem]) {
@@ -1247,6 +1261,9 @@ pub fn context_menu_items(
             uri: uri.to_string(),
             label: name.to_string(),
         });
+    }
+    if kind == "playlist" {
+        super::mix::spotify_playlist_merge_menu(app, ui, uri, name);
     }
     let saved = app.is_saved(uri).unwrap_or(false);
     let (icon, text) = match (kind, saved) {

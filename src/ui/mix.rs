@@ -8,6 +8,7 @@ use crate::{
     theme,
 };
 use egui::{Color32, RichText};
+use std::collections::{BTreeSet, HashMap};
 
 fn emit(app: &mut App, action: MixAction) {
     app.actions.push(Action::Integration(action));
@@ -18,6 +19,128 @@ fn heading(app: &App, ui: &mut egui::Ui, text: &str) {
 }
 fn message(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).color(Color32::from_rgb(220, 110, 65)));
+}
+
+pub fn add_to_local_playlist_menu(app: &mut App, ui: &mut egui::Ui, items: &[MediaRef]) {
+    let local = app.integration.local.playlists.clone();
+    let palette = app.palette;
+    ui.add_enabled_ui(app.integration.local_ready && !items.is_empty(), |ui| {
+        super::widgets::menu_submenu(ui, &palette, None, "Add to local playlist", |ui| {
+            if super::widgets::menu_item(ui, &palette, None, "New local playlist") {
+                emit(
+                    app,
+                    MixAction::CreateLocalWithItems {
+                        name: "Local playlist".into(),
+                        items: items.to_vec(),
+                    },
+                );
+            }
+            for playlist in local {
+                if super::widgets::menu_item(ui, &palette, None, &playlist.name) {
+                    emit(
+                        app,
+                        MixAction::AddLocal {
+                            id: playlist.id,
+                            items: items.to_vec(),
+                        },
+                    );
+                }
+            }
+        });
+    });
+}
+
+pub fn spotify_playlist_merge_menu(app: &mut App, ui: &mut egui::Ui, uri: &str, name: &str) {
+    let local = app.integration.local.playlists.clone();
+    let palette = app.palette;
+    ui.add_enabled_ui(
+        app.integration.local_ready && app.integration.spotify_import.is_none(),
+        |ui| {
+            super::widgets::menu_submenu(ui, &palette, None, "Merge into local playlist", |ui| {
+                if super::widgets::menu_item(ui, &palette, None, "New local playlist") {
+                    emit(
+                        app,
+                        MixAction::ImportSpotifyPlaylist {
+                            uri: uri.into(),
+                            name: name.into(),
+                            target: None,
+                        },
+                    );
+                }
+                for playlist in local {
+                    if super::widgets::menu_item(ui, &palette, None, &playlist.name) {
+                        emit(
+                            app,
+                            MixAction::ImportSpotifyPlaylist {
+                                uri: uri.into(),
+                                name: name.into(),
+                                target: Some(playlist.id),
+                            },
+                        );
+                    }
+                }
+            });
+        },
+    );
+}
+
+struct BulkSelection {
+    id: egui::Id,
+    rows: BTreeSet<usize>,
+}
+
+impl BulkSelection {
+    fn load(ui: &egui::Ui, scope: &str, generation: u64, items: &[MediaRef]) -> Self {
+        let id = ui.make_persistent_id(("mixed-song-selection", scope, generation, items));
+        let rows = ui
+            .ctx()
+            .data_mut(|data| data.get_temp::<BTreeSet<usize>>(id).unwrap_or_default());
+        Self { id, rows }
+    }
+
+    fn items(&self, items: &[MediaRef]) -> Vec<MediaRef> {
+        self.rows
+            .iter()
+            .filter_map(|index| items.get(*index).cloned())
+            .collect()
+    }
+
+    fn set(&mut self, index: usize, selected: bool) {
+        if selected {
+            self.rows.insert(index);
+        } else {
+            self.rows.remove(&index);
+        }
+    }
+
+    fn save(self, ui: &egui::Ui) {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(self.id, self.rows));
+    }
+}
+
+fn bulk_selection_controls(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    scope: &str,
+    items: &[MediaRef],
+) -> BulkSelection {
+    let mut selection = BulkSelection::load(ui, scope, app.integration.generation, items);
+    if !items.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            let mut all = selection.rows.len() == items.len();
+            if ui.checkbox(&mut all, "Select all").changed() {
+                selection.rows = if all {
+                    (0..items.len()).collect()
+                } else {
+                    BTreeSet::new()
+                };
+            }
+            ui.label(format!("{} selected", selection.rows.len()));
+            add_to_local_playlist_menu(app, ui, &selection.items(items));
+        });
+    }
+    selection
 }
 
 pub fn soundcloud_badge(app: &mut App, ui: &mut egui::Ui, link: &str) {
@@ -92,7 +215,7 @@ pub fn search(app: &mut App, ui: &mut egui::Ui) {
     {
         ui.label("No SoundCloud songs found.");
     }
-    track_list(app, ui, &tracks);
+    track_list(app, ui, &tracks, "soundcloud-search");
     let playlists = app.integration.search_playlists.clone();
     if !playlists.is_empty() {
         ui.add_space(14.0);
@@ -136,6 +259,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 && ui.button("Play local mix").clicked()
             {
                 emit(app, MixAction::Command(Command::Play));
+            }
+        });
+    }
+    if let Some(name) = app
+        .integration
+        .spotify_import
+        .as_ref()
+        .map(|import| import.name.clone())
+    {
+        ui.horizontal_wrapped(|ui| {
+            ui.spinner();
+            theme::text(
+                ui,
+                format!("Importing {name} from Spotify..."),
+                theme::regular(13.0),
+                app.palette.secondary,
+            );
+            if ui.button("Cancel import").clicked() {
+                emit(app, MixAction::CancelSpotifyImport);
             }
         });
     }
@@ -296,17 +438,34 @@ fn library(app: &mut App, ui: &mut egui::Ui) {
     }
     let spotify = app.library.playlists.get().cloned().unwrap_or_default();
     for playlist in spotify {
-        if theme::soft_button(
+        let response = theme::soft_button(
             ui,
             &app.palette,
             None,
             &format!("{} · Spotify", playlist.name),
             false,
-        )
-        .clicked()
-        {
-            app.actions.push(Action::Open(Page::Playlist(playlist.id)));
+        );
+        if response.clicked() {
+            app.actions
+                .push(Action::Open(Page::Playlist(playlist.id.clone())));
         }
+        let uri = if playlist.uri.is_empty() {
+            format!("spotify:playlist:{}", playlist.id)
+        } else {
+            playlist.uri.clone()
+        };
+        let owned = app.user_id().is_some_and(|user| playlist.owned_by(user));
+        egui::Popup::context_menu(&response)
+            .frame(super::widgets::menu_frame(&app.palette))
+            .show(|ui| {
+                super::widgets::context_menu_items(
+                    ui,
+                    app,
+                    &uri,
+                    &playlist.name,
+                    owned.then_some(&playlist),
+                );
+            });
     }
     ui.add_space(20.0);
     ui.horizontal_wrapped(|ui| {
@@ -378,7 +537,7 @@ fn library(app: &mut App, ui: &mut egui::Ui) {
                     .unwrap_or(true)
             })
             .collect();
-        track_list(app, ui, &liked);
+        track_list(app, ui, &liked, "soundcloud-likes");
     }
 }
 
@@ -470,14 +629,19 @@ fn soundcloud_playlist(app: &mut App, ui: &mut egui::Ui, urn: &str) {
         name: playlist.title.clone(),
         id: Some(playlist.urn.clone()),
     };
+    let references: Vec<_> = expected.iter().cloned().map(MediaRef::SoundCloud).collect();
+    let mut selection =
+        bulk_selection_controls(app, ui, &format!("soundcloud-playlist:{urn}"), &references);
     let mut playable_index = 0;
     for (index, track) in tracks.iter().enumerate() {
         ui.push_id((urn, index), |ui| {
-            media_row_with_context(
+            selected_media_row(
                 app,
                 ui,
                 &MediaItem::from(track.clone()),
                 Some((&playable, playable_index, &playing_from)),
+                &mut selection,
+                index,
             );
             if owned {
                 ui.add_enabled_ui(!app.integration.mutation_pending, |ui| {
@@ -532,6 +696,7 @@ fn soundcloud_playlist(app: &mut App, ui: &mut egui::Ui, urn: &str) {
             playable_index += 1;
         }
     }
+    selection.save(ui);
 }
 
 fn local_playlist(app: &mut App, ui: &mut egui::Ui, id: u64) {
@@ -619,11 +784,19 @@ fn local_playlist(app: &mut App, ui: &mut egui::Ui, id: u64) {
             }
         }
     });
-    ui.small("You can also add songs using their menu in search results or Spotify lists.");
+    ui.small("You can also select songs in search results or Spotify lists and add them together.");
+    let mut selection =
+        bulk_selection_controls(app, ui, &format!("local-playlist:{id}"), &playlist.items);
     if app.integration.resolving {
         ui.spinner();
     }
     let resolved = app.integration.resolved_items.clone();
+    let mut resolved_by_reference = HashMap::with_capacity(resolved.len());
+    for item in &resolved {
+        resolved_by_reference
+            .entry(item.media_ref())
+            .or_insert(item);
+    }
     let playable: Vec<_> = resolved
         .iter()
         .filter(|item| item.playable())
@@ -636,19 +809,26 @@ fn local_playlist(app: &mut App, ui: &mut egui::Ui, id: u64) {
     let mut playable_index = 0;
     for (index, reference) in playlist.items.iter().enumerate() {
         ui.push_id((id, index), |ui| {
-            if let Some(item) = resolved.iter().find(|item| &item.media_ref() == reference) {
-                media_row_with_context(
+            if let Some(item) = resolved_by_reference.get(reference) {
+                selected_media_row(
                     app,
                     ui,
                     item,
                     Some((&playable, playable_index, &playing_from)),
+                    &mut selection,
+                    index,
                 );
             } else {
                 let label = match reference {
                     MediaRef::Spotify(uri) => format!("Spotify · {uri}"),
                     MediaRef::SoundCloud(urn) => format!("SoundCloud · {urn}"),
                 };
-                ui.label(label);
+                ui.horizontal_wrapped(|ui| {
+                    let mut selected = selection.rows.contains(&index);
+                    ui.checkbox(&mut selected, "Select");
+                    selection.set(index, selected);
+                    ui.label(label);
+                });
             }
             ui.horizontal(|ui| {
                 if ui
@@ -686,16 +866,17 @@ fn local_playlist(app: &mut App, ui: &mut egui::Ui, id: u64) {
             });
             ui.separator();
         });
-        if resolved
-            .iter()
-            .any(|item| &item.media_ref() == reference && item.playable())
+        if resolved_by_reference
+            .get(reference)
+            .is_some_and(|item| item.playable())
         {
             playable_index += 1;
         }
     }
+    selection.save(ui);
 }
 
-fn track_list(app: &mut App, ui: &mut egui::Ui, tracks: &[crate::soundcloud::Track]) {
+fn track_list(app: &mut App, ui: &mut egui::Ui, tracks: &[crate::soundcloud::Track], scope: &str) {
     let playable: Vec<_> = tracks
         .iter()
         .filter(|track| track.is_playable())
@@ -706,20 +887,28 @@ fn track_list(app: &mut App, ui: &mut egui::Ui, tracks: &[crate::soundcloud::Tra
         name: "SoundCloud songs".into(),
         id: None,
     };
+    let references: Vec<_> = tracks
+        .iter()
+        .map(|track| MediaRef::SoundCloud(track.urn.clone()))
+        .collect();
+    let mut selection = bulk_selection_controls(app, ui, scope, &references);
     let mut playable_index = 0;
     for (index, track) in tracks.iter().enumerate() {
         ui.push_id((&track.urn, index), |ui| {
-            media_row_with_context(
+            selected_media_row(
                 app,
                 ui,
                 &MediaItem::from(track.clone()),
                 Some((&playable, playable_index, &playing_from)),
+                &mut selection,
+                index,
             )
         });
         if track.is_playable() {
             playable_index += 1;
         }
     }
+    selection.save(ui);
 }
 
 pub fn media_row(app: &mut App, ui: &mut egui::Ui, item: &MediaItem) {
@@ -732,12 +921,38 @@ fn media_row_with_context(
     item: &MediaItem,
     context: Option<(&[MediaItem], usize, &crate::mix::MixContext)>,
 ) {
+    media_row_with_selection(app, ui, item, context, None);
+}
+
+fn selected_media_row(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    item: &MediaItem,
+    context: Option<(&[MediaItem], usize, &crate::mix::MixContext)>,
+    selection: &mut BulkSelection,
+    index: usize,
+) {
+    let mut selected = selection.rows.contains(&index);
+    media_row_with_selection(app, ui, item, context, Some(&mut selected));
+    selection.set(index, selected);
+}
+
+fn media_row_with_selection(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    item: &MediaItem,
+    context: Option<(&[MediaItem], usize, &crate::mix::MixContext)>,
+    selected: Option<&mut bool>,
+) {
     let palette = app.palette;
     egui::Frame::new()
         .fill(palette.panel)
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
+                if let Some(selected) = selected {
+                    ui.checkbox(selected, "Select");
+                }
                 let (cover, _) =
                     ui.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
                 super::widgets::paint_cover(
@@ -877,24 +1092,7 @@ pub fn media_menu(app: &mut App, ui: &mut egui::Ui, item: &MediaItem) {
         );
         ui.close();
     }
-    let local = app.integration.local.playlists.clone();
-    ui.menu_button("Add to local playlist", |ui| {
-        if local.is_empty() {
-            ui.label("Create a local playlist in Library first.");
-        }
-        for playlist in local {
-            if theme::soft_button(ui, &app.palette, None, &playlist.name, false).clicked() {
-                emit(
-                    app,
-                    MixAction::AddLocal {
-                        id: playlist.id,
-                        items: vec![item.media_ref()],
-                    },
-                );
-                ui.close();
-            }
-        }
-    });
+    add_to_local_playlist_menu(app, ui, &[item.media_ref()]);
     if let MediaItem::SoundCloud(track) = item {
         let owned = app
             .integration
@@ -1037,4 +1235,48 @@ pub fn session_selector(app: &mut App, ui: &mut egui::Ui) {
             emit(app, MixAction::SelectMix(true));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bulk_selection_keeps_duplicate_rows_and_resets_when_its_list_changes() {
+        let items = vec![
+            MediaRef::SoundCloud("soundcloud:tracks:1".into()),
+            MediaRef::Spotify("spotify:track:2".into()),
+            MediaRef::SoundCloud("soundcloud:tracks:1".into()),
+        ];
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut picked = BulkSelection::load(ui, "local:1", 0, &items);
+            picked.set(2, true);
+            picked.set(0, true);
+            picked.save(ui);
+
+            let restored = BulkSelection::load(ui, "local:1", 0, &items);
+            assert_eq!(
+                restored.items(&items),
+                vec![items[0].clone(), items[2].clone()]
+            );
+            assert!(
+                BulkSelection::load(ui, "local:2", 0, &items)
+                    .rows
+                    .is_empty()
+            );
+            assert!(
+                BulkSelection::load(ui, "local:1", 1, &items)
+                    .rows
+                    .is_empty()
+            );
+            let mut changed = items.clone();
+            changed.swap(0, 1);
+            assert!(
+                BulkSelection::load(ui, "local:1", 0, &changed)
+                    .rows
+                    .is_empty()
+            );
+        });
+    }
 }
