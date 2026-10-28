@@ -37,6 +37,10 @@ class ForkIsolationTests(unittest.TestCase):
             stem = "spotifast-mix-v1.2.3-x86_64-pc-windows-msvc"
             archive = root / f"output/{stem}.zip"
             with zipfile.ZipFile(archive) as package:
+                # ZipInfo.filename normalizes Windows separators. The raw
+                # name must also match .NET's exact bootstrap entry lookup.
+                self.assertTrue(all("\\" not in entry.orig_filename
+                                    for entry in package.infolist()))
                 # The updater extracts this exact member, and every file is
                 # inside that one version-and-target directory.
                 entries = {name for name in package.namelist() if not name.endswith("/")}

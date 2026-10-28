@@ -57,7 +57,24 @@ try {
         # fastframe-dirs uses this marker to select an adjacent private profile.
         # Never package any actual profile, saved credentials, or account data.
         Set-Content -LiteralPath (Join-Path $payload 'spotifast-mix-portable.txt') -Value 'spotifast-mix-portable-v1' -Encoding Ascii
-        Compress-Archive -LiteralPath $payload -DestinationPath $archive
+        # Windows PowerShell's Compress-Archive can store backslashes. The
+        # updater and bootstrap look up exact ZIP paths with forward slashes.
+        Add-Type -AssemblyName System.IO.Compression
+        $archiveStream = [IO.File]::Open($archive, [IO.FileMode]::CreateNew)
+        $zip = [IO.Compression.ZipArchive]::new($archiveStream, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($file in Get-ChildItem -LiteralPath $payload -File | Sort-Object Name) {
+                $entry = $zip.CreateEntry("$packageName/$($file.Name)", [IO.Compression.CompressionLevel]::Optimal)
+                $inputStream = [IO.File]::OpenRead($file.FullName)
+                try {
+                    $outputStream = $entry.Open()
+                    try { $inputStream.CopyTo($outputStream) }
+                    finally { $outputStream.Dispose() }
+                }
+                finally { $inputStream.Dispose() }
+            }
+        }
+        finally { $zip.Dispose(); $archiveStream.Dispose() }
         $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
         Set-Content -LiteralPath ($archive + '.sha256') -Value "$digest  $([IO.Path]::GetFileName($archive))" -Encoding Ascii
         Write-Output $archive
