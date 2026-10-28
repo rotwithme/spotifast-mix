@@ -815,7 +815,8 @@ impl App {
                 {
                     playlist.items.remove(index);
                 }
-                self.integration.resolved_items.clear();
+                // The table looks up metadata by provider reference. Removing
+                // an occurrence must not blank every remaining song's details.
                 self.persist_local_playlists();
             }
             MixAction::MoveLocal { id, from, to } => {
@@ -831,7 +832,7 @@ impl App {
                     let item = playlist.items.remove(from);
                     playlist.items.insert(to, item);
                 }
-                self.integration.resolved_items.clear();
+                // Reordering changes positions, not the referenced recordings.
                 self.persist_local_playlists();
             }
             MixAction::PlayLocal(id) => {
@@ -1711,16 +1712,32 @@ mod tests {
         app.apply_integration(MixAction::CreateLocal("A local mix".into()));
         let id = app.integration.local.playlists[0].id;
         let reference = MediaRef::SoundCloud("soundcloud:tracks:42".into());
+        let other = MediaRef::SoundCloud("soundcloud:tracks:43".into());
         app.apply_integration(MixAction::AddLocal {
             id,
-            items: vec![reference.clone(), reference.clone()],
+            items: vec![reference.clone(), other.clone(), reference.clone()],
         });
+        let metadata = vec![
+            soundcloud("soundcloud:tracks:42"),
+            soundcloud("soundcloud:tracks:43"),
+        ];
+        app.integration.resolved_items = metadata.clone();
+        app.apply_integration(MixAction::MoveLocal { id, from: 1, to: 0 });
+        assert_eq!(
+            app.integration.local.playlists[0].items,
+            vec![other, reference.clone(), reference.clone()]
+        );
+        assert_eq!(app.integration.resolved_items, metadata);
         app.apply_integration(MixAction::RemoveLocal { id, index: 0 });
-        assert_eq!(app.integration.local.playlists[0].items, vec![reference]);
+        assert_eq!(
+            app.integration.local.playlists[0].items,
+            vec![reference.clone(), reference]
+        );
+        assert_eq!(app.integration.resolved_items, metadata);
         assert!(app.flush_files());
         let bytes = std::fs::read(app.dirs.state.join("mixed-playlists.json")).unwrap();
         let restored = crate::integration::LocalPlaylists::decode(&bytes).unwrap();
-        assert_eq!(restored.playlists[0].items.len(), 1);
+        assert_eq!(restored.playlists[0].items.len(), 2);
         assert!(
             !String::from_utf8(bytes)
                 .unwrap()
