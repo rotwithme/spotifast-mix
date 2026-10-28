@@ -350,6 +350,9 @@ pub fn populate(app: &mut App) {
     };
     app.local_device_id = Some("local-demo".into());
     app.local_ready = true;
+    // The offline corpus has an empty, fully loaded local library. It never
+    // waits for the real profile's playlist file or a background load event.
+    app.integration.local_ready = true;
     app.local_playback = crate::backend::LocalPlayback::Ready {
         device_id: "local-demo".into(),
     };
