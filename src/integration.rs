@@ -676,6 +676,7 @@ impl Worker {
         };
         let client = Arc::clone(&self.client);
         let api = Arc::clone(&self.api);
+        let spotify_session = self.spotify_session.clone();
         let notify = Arc::clone(&self.notify);
         let guard = Arc::clone(&self.generation);
         let ready = self.account_ready.clone();
@@ -765,7 +766,8 @@ impl Worker {
                     play,
                     serial,
                 } => {
-                    let result = resolve_items(items, &client, &api).await;
+                    let result =
+                        resolve_items(items, &client, &api, spotify_session.as_ref()).await;
                     Event::Items {
                         generation,
                         serial,
@@ -1222,15 +1224,76 @@ async fn resolve_items(
     items: Vec<mix::MediaRef>,
     soundcloud: &Arc<soundcloud::Client>,
     spotify: &Arc<crate::api::ApiGateway>,
+    session: Option<&librespot_core::session::Session>,
 ) -> Result<Vec<mix::MediaItem>, String> {
+    let account = spotify.account();
+    let uris: Vec<_> = items
+        .iter()
+        .filter_map(|reference| match reference {
+            mix::MediaRef::Spotify(uri) => Some(uri.clone()),
+            _ => None,
+        })
+        .collect();
+    let metadata = if !uris.is_empty()
+        && let Some(session) = session.filter(|session| {
+            account
+                .as_ref()
+                .is_some_and(|account| session.username() == account.as_str())
+        }) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            crate::session_reads::referenced_items(session, &uris),
+        )
+        .await
+        .ok()
+        .and_then(Result::ok)
+    } else {
+        None
+    };
+    let metadata = Arc::new(metadata);
     let soundcloud = Arc::clone(soundcloud);
     let spotify = Arc::clone(spotify);
-    resolve_references(items, move |reference| {
+    let current = Arc::clone(&spotify);
+    let result = resolve_references(items, move |reference| {
         let soundcloud = Arc::clone(&soundcloud);
         let spotify = Arc::clone(&spotify);
-        async move { resolve_one(reference, &soundcloud, &spotify).await }
+        let metadata = Arc::clone(&metadata);
+        async move {
+            if let Some(item) = spotify_session_item(&reference, metadata.as_ref().as_ref()) {
+                return Ok(item);
+            }
+            resolve_one(reference, &soundcloud, &spotify).await
+        }
     })
-    .await
+    .await;
+    if !uris.is_empty() && current.account() != account {
+        return Err(
+            "The Spotify account changed while loading this playlist. Refresh to retry.".into(),
+        );
+    }
+    result
+}
+
+fn spotify_session_item(
+    reference: &mix::MediaRef,
+    metadata: Option<&HashMap<String, crate::api::models::PlayableItem>>,
+) -> Option<mix::MediaItem> {
+    let mix::MediaRef::Spotify(uri) = reference else {
+        return None;
+    };
+    let metadata = metadata?;
+    Some(
+        metadata
+            .get(uri)
+            .cloned()
+            .map(mix::MediaItem::from)
+            .unwrap_or_else(|| {
+                unavailable_reference(
+                    reference.clone(),
+                    "Spotify item unavailable for this account",
+                )
+            }),
+    )
 }
 
 async fn resolve_references<F, Fut>(
@@ -1340,23 +1403,91 @@ async fn resolve_one(
             };
             match tokio::time::timeout(std::time::Duration::from_secs(20), lookup).await {
                 Ok(Ok(item)) => Ok(mix::MediaItem::from(item)),
-                Ok(Err(
-                    crate::api::ApiError::NotSignedIn | crate::api::ApiError::SignInExpired { .. },
-                )) => Ok(unavailable_reference(
+                Ok(Err(error)) => Ok(unavailable_reference(
                     reference,
-                    "Connect Spotify to play this item",
+                    spotify_lookup_error(&error),
                 )),
-                _ => Ok(unavailable_reference(
+                Err(_) => Ok(unavailable_reference(
                     reference,
-                    "Spotify item unavailable. Refresh to retry",
+                    "Spotify lookup timed out. Refresh to retry",
                 )),
             }
         }
     }
 }
+
+fn spotify_lookup_error(error: &crate::api::ApiError) -> &'static str {
+    use crate::api::ApiError;
+    match error {
+        ApiError::NotSignedIn | ApiError::SignInExpired { .. } => {
+            "Connect Spotify to play this item"
+        }
+        ApiError::RateLimited => "Spotify request limit reached. Refresh later",
+        ApiError::QuotaExhausted => "Spotify app quota exhausted. Try again after it resets",
+        ApiError::Status { status: 403, .. } => {
+            "Spotify denied this item. Check your Spotify app's account access"
+        }
+        ApiError::Status { status: 404, .. } => "This Spotify item is no longer available",
+        ApiError::Network(_) => "Spotify connection unavailable. Refresh to retry",
+        _ => "Spotify metadata could not be loaded. Refresh to retry",
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn local_spotify_metadata_keeps_duplicates_playable_and_distinguishes_missing_items() {
+        use crate::api::models::{PlayableItem, Track};
+        let uri = "spotify:track:1234567890abcdefghijkl";
+        let reference = mix::MediaRef::Spotify(uri.into());
+        let missing = mix::MediaRef::Spotify("spotify:track:abcdefghijkl1234567890".into());
+        let metadata = Arc::new(HashMap::from([(
+            uri.into(),
+            PlayableItem::Track(Track {
+                uri: uri.into(),
+                name: "Actual Spotify title".into(),
+                duration_ms: 210_000,
+                ..Default::default()
+            }),
+        )]));
+        let resolved = resolve_references(
+            vec![reference.clone(), missing, reference.clone()],
+            move |reference| {
+                let metadata = Arc::clone(&metadata);
+                async move {
+                    Ok(spotify_session_item(&reference, Some(&metadata))
+                        .expect("Spotify session projection"))
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(resolved.len(), 3);
+        assert!(resolved[0].playable());
+        assert_eq!(resolved[0].title(), "Actual Spotify title");
+        assert_eq!(resolved[0].duration_ms(), 210_000);
+        assert_eq!(resolved[0], resolved[2]);
+        assert!(!resolved[1].playable());
+        assert_eq!(resolved[0].media_ref(), reference);
+        assert!(
+            spotify_session_item(&reference, None).is_none(),
+            "a failed session lookup must allow Web API fallback"
+        );
+        assert!(
+            spotify_session_item(
+                &mix::MediaRef::SoundCloud("soundcloud:tracks:3".into()),
+                Some(&HashMap::new())
+            )
+            .is_none()
+        );
+        assert!(spotify_lookup_error(&crate::api::ApiError::RateLimited).contains("request limit"));
+        assert!(spotify_lookup_error(&crate::api::ApiError::QuotaExhausted).contains("quota"));
+        assert!(
+            spotify_lookup_error(&crate::api::ApiError::Network("test failure".into()))
+                .contains("connection")
+        );
+    }
 
     #[tokio::test]
     async fn bulk_spotify_snapshot_preserves_pages_duplicates_and_unavailable_references() {

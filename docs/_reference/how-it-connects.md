@@ -119,6 +119,13 @@ private response falls back to the Web API, with the same limits as popular
 tracks. This uses the
 same session-read deadline and does not request another grant or permission.
 
+Local mixed playlists also read Spotify track and episode details through the
+same-account playback session, in deduplicated metadata batches of at most 100.
+This uses the existing session transport and proxy. A failed session read falls
+back to the normal Web API catalog client. A definitive missing item stays
+unavailable; another recording is never substituted. Account changes invalidate
+the result. SoundCloud references never enter this Spotify metadata request.
+
 Background reads have separate four-request budgets for the shared Web API,
 the personal Web API, and the playback session. Waiting for shared sign-in or
 rate-limit recovery therefore cannot occupy the personal app's or playback

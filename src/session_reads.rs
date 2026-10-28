@@ -1655,6 +1655,26 @@ pub(crate) fn normalize_local_track_labels(track: &mut Track) {
     }
 }
 
+/// Metadata for saved provider references. Reuse the playlist reader's batch
+/// decoder, with bounded requests and without losing repeated playlist slots.
+pub(crate) async fn referenced_items(
+    session: &Session,
+    uris: &[String],
+) -> Result<HashMap<String, PlayableItem>, Failure> {
+    let requested: Vec<_> = uris
+        .iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|uri| SpotifyUri::from_uri(uri).ok())
+        .filter(|uri| matches!(uri, SpotifyUri::Track { .. } | SpotifyUri::Episode { .. }))
+        .collect();
+    let mut found = HashMap::new();
+    for chunk in requested.chunks(100) {
+        found.extend(metadata(session, chunk.iter()).await?);
+    }
+    Ok(found)
+}
+
 /// Track and episode details for the given URIs, in one batched request.
 /// A URI Spotify says it has no item for is absent, as the Web API leaves
 /// such a row's item empty. An answer Spotify could not give, or one this
