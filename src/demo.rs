@@ -3963,7 +3963,11 @@ mod tests {
             ("without a cover", "Compact track list"),
             ("Ctrl+0", "Interface zoom"),
             ("Rust", "About"),
-            ("Install a new build manually", "Updates"),
+            if crate::updates::ENABLED {
+                ("Checks GitHub once a day", "Automatic update checks")
+            } else {
+                ("Windows x64 portable build", "Updates")
+            },
         ] {
             let query = if cfg!(target_os = "macos") && query == "Ctrl+0" {
                 "Cmd+0"
