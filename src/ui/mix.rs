@@ -8,7 +8,9 @@ use crate::{
     theme,
 };
 use egui::{Color32, RichText};
-use std::collections::{BTreeSet, HashMap};
+
+mod local_playlist;
+use std::collections::BTreeSet;
 
 fn emit(app: &mut App, action: MixAction) {
     app.actions.push(Action::Integration(action));
@@ -227,21 +229,23 @@ pub fn search(app: &mut App, ui: &mut egui::Ui) {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    ui.horizontal_wrapped(|ui| {
-        for (view, title) in [
-            (View::Library, "Library"),
-            (View::Queue, "Local mix"),
-            (View::Accounts, "Accounts"),
-        ] {
-            if ui
-                .selectable_label(app.integration.view == view, title)
-                .clicked()
-            {
-                emit(app, MixAction::Open(view));
+    if !matches!(&app.integration.view, View::LocalPlaylist(_)) {
+        ui.horizontal_wrapped(|ui| {
+            for (view, title) in [
+                (View::Library, "Library"),
+                (View::Queue, "Local mix"),
+                (View::Accounts, "Accounts"),
+            ] {
+                if ui
+                    .selectable_label(app.integration.view == view, title)
+                    .clicked()
+                {
+                    emit(app, MixAction::Open(view));
+                }
             }
-        }
-    });
-    ui.add_space(12.0);
+        });
+        ui.add_space(12.0);
+    }
     if let Some(error) = app.integration.error.clone() {
         message(ui, &error);
         if app.integration.pending_edit.is_some() {
@@ -285,7 +289,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         View::Accounts => accounts(app, ui),
         View::Library => library(app, ui),
         View::Playlist(urn) => soundcloud_playlist(app, ui, &urn),
-        View::LocalPlaylist(id) => local_playlist(app, ui, id),
+        View::LocalPlaylist(id) => local_playlist::show(app, ui, id),
         View::Queue => queue(app, ui),
     }
 }
@@ -693,183 +697,6 @@ fn soundcloud_playlist(app: &mut App, ui: &mut egui::Ui, urn: &str) {
             }
         });
         if track.is_playable() {
-            playable_index += 1;
-        }
-    }
-    selection.save(ui);
-}
-
-fn local_playlist(app: &mut App, ui: &mut egui::Ui, id: u64) {
-    let Some(playlist) = app
-        .integration
-        .local
-        .playlists
-        .iter()
-        .find(|p| p.id == id)
-        .cloned()
-    else {
-        ui.label("This local playlist no longer exists.");
-        return;
-    };
-    heading(app, ui, &playlist.name);
-    theme::text(
-        ui,
-        format!("Local mixed playlist · {} songs", playlist.items.len()),
-        theme::regular(12.0),
-        app.palette.secondary,
-    );
-    ui.horizontal_wrapped(|ui| {
-        if ui
-            .add_enabled(
-                !playlist.items.is_empty() && !app.integration.resolving,
-                egui::Button::new("Play in local mix"),
-            )
-            .clicked()
-        {
-            emit(app, MixAction::PlayLocal(id));
-        }
-        ui.add(
-            egui::TextEdit::singleline(&mut app.integration.draft_name)
-                .hint_text("New name")
-                .desired_width(180.0),
-        );
-        if ui
-            .add_enabled(
-                !app.integration.draft_name.trim().is_empty(),
-                egui::Button::new("Rename"),
-            )
-            .clicked()
-        {
-            emit(
-                app,
-                MixAction::RenameLocal {
-                    id,
-                    name: app.integration.draft_name.clone(),
-                },
-            );
-        }
-        ui.menu_button("Delete", |ui| {
-            if ui.button("Delete local playlist").clicked() {
-                emit(app, MixAction::DeleteLocal(id));
-                ui.close();
-            }
-        });
-    });
-    ui.horizontal_wrapped(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(&mut app.integration.draft_link)
-                .hint_text("Paste a Spotify or SoundCloud song link")
-                .desired_width(320.0),
-        );
-        if ui
-            .add_enabled(
-                !app.integration.draft_link.trim().is_empty() && !app.integration.resolving,
-                egui::Button::new("Add song"),
-            )
-            .clicked()
-        {
-            let text = app.integration.draft_link.trim().to_string();
-            if let Some(uri) = crate::link::parse(&text).filter(|uri| {
-                uri.starts_with("spotify:track:") || uri.starts_with("spotify:episode:")
-            }) {
-                emit(
-                    app,
-                    MixAction::AddLocal {
-                        id,
-                        items: vec![MediaRef::Spotify(uri)],
-                    },
-                );
-            } else {
-                emit(app, MixAction::OpenLink(text));
-            }
-        }
-    });
-    ui.small("You can also select songs in search results or Spotify lists and add them together.");
-    let mut selection =
-        bulk_selection_controls(app, ui, &format!("local-playlist:{id}"), &playlist.items);
-    if app.integration.resolving {
-        ui.spinner();
-    }
-    let resolved = app.integration.resolved_items.clone();
-    let mut resolved_by_reference = HashMap::with_capacity(resolved.len());
-    for item in &resolved {
-        resolved_by_reference
-            .entry(item.media_ref())
-            .or_insert(item);
-    }
-    let playable: Vec<_> = resolved
-        .iter()
-        .filter(|item| item.playable())
-        .cloned()
-        .collect();
-    let playing_from = crate::mix::MixContext {
-        name: playlist.name.clone(),
-        id: Some(format!("local:{}", playlist.id)),
-    };
-    let mut playable_index = 0;
-    for (index, reference) in playlist.items.iter().enumerate() {
-        ui.push_id((id, index), |ui| {
-            if let Some(item) = resolved_by_reference.get(reference) {
-                selected_media_row(
-                    app,
-                    ui,
-                    item,
-                    Some((&playable, playable_index, &playing_from)),
-                    &mut selection,
-                    index,
-                );
-            } else {
-                let label = match reference {
-                    MediaRef::Spotify(uri) => format!("Spotify · {uri}"),
-                    MediaRef::SoundCloud(urn) => format!("SoundCloud · {urn}"),
-                };
-                ui.horizontal_wrapped(|ui| {
-                    let mut selected = selection.rows.contains(&index);
-                    ui.checkbox(&mut selected, "Select");
-                    selection.set(index, selected);
-                    ui.label(label);
-                });
-            }
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(index > 0, egui::Button::new("Move up"))
-                    .clicked()
-                {
-                    emit(
-                        app,
-                        MixAction::MoveLocal {
-                            id,
-                            from: index,
-                            to: index - 1,
-                        },
-                    );
-                }
-                if ui
-                    .add_enabled(
-                        index + 1 < playlist.items.len(),
-                        egui::Button::new("Move down"),
-                    )
-                    .clicked()
-                {
-                    emit(
-                        app,
-                        MixAction::MoveLocal {
-                            id,
-                            from: index,
-                            to: index + 1,
-                        },
-                    );
-                }
-                if ui.button("Remove").clicked() {
-                    emit(app, MixAction::RemoveLocal { id, index });
-                }
-            });
-            ui.separator();
-        });
-        if resolved_by_reference
-            .get(reference)
-            .is_some_and(|item| item.playable())
-        {
             playable_index += 1;
         }
     }

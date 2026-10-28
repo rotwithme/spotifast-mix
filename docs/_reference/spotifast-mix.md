@@ -67,9 +67,23 @@ and custom drag order include local playlists. They remain accessible without a
 Spotify sign-in. Drag selected Spotify songs onto a local playlist to add them.
 Renaming or deleting a local playlist updates its sidebar row immediately.
 
+Local playlist pages use the same cover and title header and compact numbered
+rows as Spotify playlists. Use the round Play button to start Local mix,
+the plus button to add a song link, and the playlist menu to rename or delete.
+Right-click a song, or open its row menu, to remove or move it. Drag rows to
+reorder them; repeated songs keep their individual positions. The Refresh
+control reloads song metadata without changing saved playlist membership.
+
+Spotify metadata first uses the same account's authorized playback session,
+then falls back to the Web API if that read fails. A missing playback sign-in,
+Web API quota, or network error is explained instead of making all failures
+look like permanently unavailable songs. SoundCloud still has its independent
+connection and metadata lookup.
+
 To add songs together, select Spotify rows with Ctrl-click or Shift-click,
 right-click a selected row, and choose **Add to local playlist**. SoundCloud
-and local song lists have checkboxes and **Select all**. Choose an existing local
+song lists have checkboxes and **Select all**. Local playlists support Ctrl-click,
+Shift-click and **Select all**. Choose an existing local
 playlist or **New local playlist**. Songs are added in displayed order, including
 repeated occurrences.
 

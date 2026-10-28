@@ -346,7 +346,12 @@ mod tests {
             ("mix-queue", &["Local mix", "Playing next", "Next up"]),
             (
                 "mix-playlist",
-                &["After-hours blend", "Play in local mix", "Add song"],
+                &[
+                    "After-hours blend",
+                    "Local mixed playlist",
+                    "Saved on this computer",
+                    "TITLE",
+                ],
             ),
             (
                 "soundcloud-search",
