@@ -281,7 +281,7 @@ impl App {
         playlist.items.extend(items);
         let updated = playlist.items.clone();
         self.persist_local_playlists();
-        if self.integration.view == View::LocalPlaylist(id) && !self.integration.resolving_play {
+        if self.integration.view == View::LocalPlaylist(id) && !self.integration.resolving {
             self.resolve_mix_items(updated, false, Some(id));
         }
         self.integration.notice = Some("Added to local playlist".into());
@@ -749,9 +749,14 @@ impl App {
                 }
                 let serial = self.integration.next_serial();
                 self.integration.error = None;
-                self.apply_integration(MixAction::Open(
-                    target.map_or(View::Library, View::LocalPlaylist),
-                ));
+                let view = target.map_or(View::Library, View::LocalPlaylist);
+                if self.integration.resolving {
+                    // Show import progress without replacing a pending add or Play lookup.
+                    self.integration.view = view;
+                    self.open(Page::Mix);
+                } else {
+                    self.apply_integration(MixAction::Open(view));
+                }
                 self.integration.spotify_import = Some(crate::integration::SpotifyImport {
                     serial,
                     name,
@@ -2027,19 +2032,52 @@ mod tests {
 
     #[test]
     fn a_resolved_link_appends_to_its_original_local_playlist_after_navigation() {
-        for create_while_pending in [false, true] {
-            let mut app = app(&format!("mix-link-target-{create_while_pending}"));
+        for operation in ["navigate", "create", "append", "import"] {
+            let mut app = app(&format!("mix-link-target-{operation}"));
             app.apply_integration(MixAction::CreateLocal("First".into()));
             let first = app.integration.local.playlists[0].id;
-            if !create_while_pending {
+            if operation != "create" {
                 app.apply_integration(MixAction::CreateLocal("Second".into()));
             }
             app.integration.view = View::LocalPlaylist(first);
             app.apply_integration(MixAction::OpenLink("https://soundcloud.com/a/b".into()));
             let serial = app.integration.resolve_serial;
-            if create_while_pending {
-                app.apply_integration(MixAction::CreateLocal("Second".into()));
+            let mut expected = Vec::new();
+            match operation {
+                "create" => app.apply_integration(MixAction::CreateLocal("Second".into())),
+                "append" => {
+                    expected.push(MediaRef::SoundCloud("soundcloud:tracks:4".into()));
+                    app.apply_integration(MixAction::AddLocal {
+                        id: first,
+                        items: expected.clone(),
+                    });
+                }
+                "import" => {
+                    app.auth = AuthStatus::Connected {
+                        username: "alice".into(),
+                    };
+                    app.user = Some(crate::api::models::User {
+                        id: "alice".into(),
+                        ..Default::default()
+                    });
+                    app.apply_integration(MixAction::ImportSpotifyPlaylist {
+                        uri: "spotify:playlist:1234567890abcdefghijkl".into(),
+                        name: "Source".into(),
+                        target: Some(first),
+                    });
+                    let import_serial = app.integration.spotify_import.as_ref().unwrap().serial;
+                    expected.push(MediaRef::Spotify(
+                        "spotify:track:1234567890abcdefghijkl".into(),
+                    ));
+                    app.handle_integration_event(MixEvent::SpotifyPlaylistImported {
+                        serial: import_serial,
+                        account: "alice".into(),
+                        result: Ok(expected.clone()),
+                    });
+                }
+                _ => {}
             }
+            assert_eq!(app.integration.resolve_serial, serial, "{operation}");
             let second = app.integration.local.playlists[1].id;
             app.integration.view = View::LocalPlaylist(second);
             let track = match soundcloud("soundcloud:tracks:3") {
@@ -2051,7 +2089,11 @@ mod tests {
                 serial,
                 result: Ok(crate::soundcloud::Resolved::Track(track)),
             });
-            assert_eq!(app.integration.local.playlists[0].items.len(), 1);
+            expected.push(MediaRef::SoundCloud("soundcloud:tracks:3".into()));
+            assert_eq!(
+                app.integration.local.playlists[0].items, expected,
+                "{operation}"
+            );
             assert!(app.integration.local.playlists[1].items.is_empty());
             assert_eq!(app.integration.view, View::LocalPlaylist(second));
         }
