@@ -230,13 +230,13 @@ impl App {
                 name: name.trim().into(),
                 items,
             });
-        self.cancel_mix_resolution();
         self.integration.view = View::LocalPlaylist(id);
         self.integration.draft_name.clear();
         self.integration.resolved_items.clear();
         self.open(Page::Mix);
         self.persist_local_playlists();
-        if !metadata_items.is_empty() {
+        // Creating a destination must leave a pending song add or Play intact.
+        if !metadata_items.is_empty() && !self.integration.resolving {
             self.resolve_mix_items(metadata_items, false, Some(id));
         }
         true
@@ -2027,27 +2027,34 @@ mod tests {
 
     #[test]
     fn a_resolved_link_appends_to_its_original_local_playlist_after_navigation() {
-        let mut app = app("mix-link-target");
-        app.apply_integration(MixAction::CreateLocal("First".into()));
-        let first = app.integration.local.playlists[0].id;
-        app.apply_integration(MixAction::CreateLocal("Second".into()));
-        let second = app.integration.local.playlists[1].id;
-        app.integration.view = View::LocalPlaylist(first);
-        app.apply_integration(MixAction::OpenLink("https://soundcloud.com/a/b".into()));
-        let serial = app.integration.resolve_serial;
-        app.integration.view = View::LocalPlaylist(second);
-        let track = match soundcloud("soundcloud:tracks:resolved") {
-            MediaItem::SoundCloud(track) => *track,
-            _ => unreachable!(),
-        };
-        app.handle_integration_event(MixEvent::Resolved {
-            generation: 0,
-            serial,
-            result: Ok(crate::soundcloud::Resolved::Track(track)),
-        });
-        assert_eq!(app.integration.local.playlists[0].items.len(), 1);
-        assert!(app.integration.local.playlists[1].items.is_empty());
-        assert_eq!(app.integration.view, View::LocalPlaylist(second));
+        for create_while_pending in [false, true] {
+            let mut app = app(&format!("mix-link-target-{create_while_pending}"));
+            app.apply_integration(MixAction::CreateLocal("First".into()));
+            let first = app.integration.local.playlists[0].id;
+            if !create_while_pending {
+                app.apply_integration(MixAction::CreateLocal("Second".into()));
+            }
+            app.integration.view = View::LocalPlaylist(first);
+            app.apply_integration(MixAction::OpenLink("https://soundcloud.com/a/b".into()));
+            let serial = app.integration.resolve_serial;
+            if create_while_pending {
+                app.apply_integration(MixAction::CreateLocal("Second".into()));
+            }
+            let second = app.integration.local.playlists[1].id;
+            app.integration.view = View::LocalPlaylist(second);
+            let track = match soundcloud("soundcloud:tracks:3") {
+                MediaItem::SoundCloud(track) => *track,
+                _ => unreachable!(),
+            };
+            app.handle_integration_event(MixEvent::Resolved {
+                generation: 0,
+                serial,
+                result: Ok(crate::soundcloud::Resolved::Track(track)),
+            });
+            assert_eq!(app.integration.local.playlists[0].items.len(), 1);
+            assert!(app.integration.local.playlists[1].items.is_empty());
+            assert_eq!(app.integration.view, View::LocalPlaylist(second));
+        }
     }
 
     #[test]
