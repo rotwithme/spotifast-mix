@@ -1249,7 +1249,7 @@ mod tests {
             MediaRef::SoundCloud("soundcloud:tracks:1".into()),
         ];
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let mut picked = BulkSelection::load(ui, "local:1", 0, &items);
             picked.set(2, true);
             picked.set(0, true);
@@ -1278,5 +1278,6 @@ mod tests {
                     .is_empty()
             );
         });
+        output.textures_delta.clear();
     }
 }
