@@ -983,6 +983,20 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
     {
         app.actions.push(Action::FocusSearch);
     }
+    if nav_row(
+        ui,
+        &palette,
+        Icon::Library,
+        "Music library",
+        page == Page::Mix,
+    )
+    .clicked()
+    {
+        app.actions
+            .push(Action::Integration(crate::integration::Action::Open(
+                crate::integration::View::Library,
+            )));
+    }
     ui.add_space(10.0);
     ui.painter().hline(
         ui.max_rect().x_range().shrink(4.0),

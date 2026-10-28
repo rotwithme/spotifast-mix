@@ -482,7 +482,7 @@ impl Default for Settings {
     /// settings files, including an inactive playlist ownership filter.
     fn default() -> Self {
         Self {
-            device_name: "Spotifast".to_string(),
+            device_name: "Spotifast Mix".to_string(),
             bitrate: 320,
             normalisation: false,
             autoplay: true,
@@ -524,7 +524,7 @@ impl Default for Settings {
             tray_icon: TrayIcon::Colour,
             mac_notch_widget: false,
             mac_show_in_dock: true,
-            check_for_updates: true,
+            check_for_updates: false,
             download_updates_automatically: false,
             pinned_contexts: Vec::new(),
             liked_songs_pinned: true,
@@ -1002,6 +1002,28 @@ impl ManualProxy {
 #[cfg(test)]
 mod tests {
     use super::Settings;
+
+    #[test]
+    fn fork_defaults_keep_legacy_preferences_readable_without_provider_secrets() {
+        let empty: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.device_name, "Spotifast Mix");
+        assert!(!empty.check_for_updates);
+        assert!(!empty.download_updates_automatically);
+        let saved: Settings = serde_json::from_value(serde_json::json!({
+            "device_name": "Living room", "check_for_updates": true,
+            "download_updates_automatically": true, "volume": 37
+        }))
+        .unwrap();
+        assert_eq!(saved.device_name, "Living room");
+        assert!(saved.check_for_updates);
+        assert!(saved.download_updates_automatically);
+        assert_eq!(saved.volume, 37);
+        let encoded = saved.encode().unwrap();
+        let round_trip: Settings = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(round_trip, saved);
+        assert!(!encoded.contains("soundcloud"));
+        assert!(!encoded.contains("client_secret"));
+    }
 
     #[test]
     fn new_profiles_follow_the_system_and_saved_choices_are_preserved() {

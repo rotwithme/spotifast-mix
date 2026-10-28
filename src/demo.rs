@@ -19,6 +19,9 @@ use crate::app::{App, RemoteSnapshot};
 use crate::backend::AuthStatus;
 use crate::model::*;
 
+#[path = "demo_mix.rs"]
+mod mix_fixtures;
+
 fn image(seed: u32) -> Vec<Image> {
     vec![
         Image {
@@ -715,7 +718,7 @@ pub fn populate(app: &mut App) {
     app.devices = vec![
         Device {
             id: Some("local-demo".into()),
-            name: "Spotifast".into(),
+            name: "Spotifast Mix".into(),
             is_active: false,
             is_restricted: false,
             volume_percent: Some(70),
@@ -1064,6 +1067,15 @@ const DEMO_CLIENT_ID: &str = "0123456789abcdef0123456789abcdef";
 pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
     // Default screenshots to the main window regardless of saved settings.
     app.settings.winamp_window = false;
+    if page == Some("mix")
+        || show
+            .unwrap_or("")
+            .split(',')
+            .map(str::trim)
+            .any(mix_fixtures::is_surface)
+    {
+        mix_fixtures::populate(app);
+    }
     if page == Some("prerelease") {
         let uri = "spotify:prerelease:0kRaNkRxpO16BjxJU0IQAL";
         if let Ok(mut data) =
@@ -1092,6 +1104,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
         app.open(page);
     }
     for surface in show.unwrap_or("").split(',').map(str::trim) {
+        if mix_fixtures::apply(app, surface) {
+            continue;
+        }
         match surface {
             "presaved" => {
                 for page in app.album_pages.values_mut() {
@@ -2528,14 +2543,28 @@ mod tests {
             );
             assert!(app.manual_queue.is_empty());
             assert_eq!(app.queue.get().unwrap().queue, rows[2..]);
+            accessible_frame(&ctx, &mut app, vec![]);
             let tree = accessible_frame(&ctx, &mut app, vec![]);
-            let recent = accessible_node(&tree, &gettext(locale, "Recent"), Role::Button);
+            let recent = tree
+                .nodes
+                .iter()
+                .find(|(_, node)| {
+                    node.label() == Some(gettext(locale, "Recent").as_ref())
+                        && node.role() == Role::Button
+                        && node.bounds().is_some_and(|bounds| bounds.x0 > 640.0)
+                })
+                .map(|(id, _)| *id)
+                .unwrap_or_else(|| panic!("missing queue Recent control for {locale:?}"));
             accessible_frame(
                 &ctx,
                 &mut app,
                 vec![accessible_action(recent, AccessibleAction::Click, None)],
             );
-            assert_eq!(app.queue_tab, QueueTab::Recents);
+            assert_eq!(
+                app.queue_tab,
+                QueueTab::Recents,
+                "Recent must switch the queue tab in {locale:?}"
+            );
             let tree = accessible_frame(&ctx, &mut app, vec![]);
             let close = accessible_node(&tree, &gettext(locale, "Close"), Role::Button);
             accessible_frame(
@@ -3269,6 +3298,8 @@ mod tests {
         use egui::accesskit::Role;
         let (ctx, mut app) = accessible_app("library-grid-drop-highlight");
         app.settings.sidebar_grid = true;
+        // Responsive panels settle their measured widths after the first pass.
+        accessible_frame(&ctx, &mut app, vec![]);
         let tree = accessible_frame(&ctx, &mut app, vec![]);
         let liked = tree
             .nodes
@@ -3277,6 +3308,9 @@ mod tests {
                 (node.role() == Role::Button && node.label() == Some("Liked Songs"))
                     .then(|| node.bounds())
                     .flatten()
+                    // Home also has a Liked Songs button. Drag onto the library
+                    // card, not whichever duplicate label appears first.
+                    .filter(|bounds| bounds.x1 <= f64::from(app.settings.sidebar_width) + 1.0)
             })
             .expect("Liked Songs card");
         let pos = egui::pos2(liked.x0 as f32 + 24.0, liked.y0 as f32 + 24.0);
@@ -3929,10 +3963,7 @@ mod tests {
             ("without a cover", "Compact track list"),
             ("Ctrl+0", "Interface zoom"),
             ("Rust", "About"),
-            (
-                "Downloads in the background",
-                "Download updates automatically",
-            ),
+            ("Install a new build manually", "Updates"),
         ] {
             let query = if cfg!(target_os = "macos") && query == "Ctrl+0" {
                 "Cmd+0"
@@ -4684,6 +4715,7 @@ mod tests {
             .unwrap()
             .rect();
         assert!(screen.contains_rect(popup), "the popup must fit: {popup:?}");
+        let discovered_height = popup.height();
         let cursor = popup.center();
         draw(
             &mut app,
@@ -4717,13 +4749,27 @@ mod tests {
         ));
         app.devices.clear();
         draw(&mut app, vec![]);
-        draw(&mut app, vec![]);
+        let output = draw(&mut app, vec![]);
         let popup = egui::AreaState::load(&ctx, egui::Id::new("devices-popup"))
             .unwrap()
             .rect();
         assert!(
-            popup.height() < 160.0,
-            "a list with only this computer should shrink to fit: {popup:?}"
+            screen.contains_rect(popup),
+            "the short popup must fit: {popup:?}"
+        );
+        for label in ["Playback session", "Spotify Connect", "Local mix"] {
+            assert!(
+                output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::epaint::Shape::Text(text)
+                        if text.galley.job.text == label
+                            && shape.clip_rect.contains_rect(text.visual_bounding_rect()))
+                }),
+                "the session control must remain visible: {label}"
+            );
+        }
+        assert!(
+            popup.height() < 260.0 && popup.height() < discovered_height,
+            "only this computer and the session controls should shrink to fit: {popup:?}"
         );
         app.backend.shutdown();
     }
@@ -5576,6 +5622,10 @@ mod tests {
     fn the_player_bar_visualizer_moves_only_when_chosen_and_playing() {
         use crate::settings::PlayerBarVis;
         let (ctx, mut app) = accessible_app("player-bar-vis");
+        // Measure this view's repaint requests in isolation. Startup's local
+        // playlist read can otherwise wake the context during any of these
+        // frames, even after the visualizer has been turned off.
+        app.backend.shutdown();
         let draw = |app: &mut App| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
@@ -5640,7 +5690,6 @@ mod tests {
         app.local.playback = crate::player::Playback::Paused;
         let output = draw(&mut app);
         assert!(!waveform(&output), "a paused song is still");
-        app.backend.shutdown();
     }
 
     /// A click on the player bar's empty space moves the visualizer to its
@@ -7122,7 +7171,7 @@ mod tests {
                             "{:?} is cut off at {size:?} in {state:?}",
                             text.galley.job.text
                         );
-                        if text.galley.job.text == "Spotifast" {
+                        if text.galley.job.text == "Spotifast Mix" {
                             title = Some(rect);
                         }
                     }

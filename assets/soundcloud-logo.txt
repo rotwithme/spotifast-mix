@@ -1,0 +1,10 @@
+SoundCloud attribution asset
+
+The unmodified black logo is provided by SoundCloud at:
+https://developers.soundcloud.com/assets/logo_black-2923bdb205b9f5f4ee7633b0f5ba585240c6fc04acac82c30b34fc3847fb749e.png
+
+Usage and attribution guidelines:
+https://developers.soundcloud.com/docs/api/buttons-logos
+
+The logo remains a SoundCloud trademark. It identifies the source of songs
+and links to their original pages. It does not identify or endorse this app.

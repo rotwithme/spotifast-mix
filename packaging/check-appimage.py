@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that an AppImage carries Spotifast's update information for ARCH
+"""Check that an AppImage carries Spotifast Mix's update information for ARCH
 and that the .zsync file beside it describes it."""
 
 import argparse

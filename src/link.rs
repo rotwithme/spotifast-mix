@@ -42,6 +42,13 @@ pub fn canonical_context_uri(uri: &str) -> String {
 /// without a locale segment (`/intl-de/`), a query string, or the old
 /// `/user/NAME/playlist/ID` shape.
 pub fn parse(text: &str) -> Option<String> {
+    // Only our own scheme is registered with the desktop. The inner link
+    // remains a provider URI so existing Spotify navigation stays compatible.
+    let text = text.trim();
+    let text = text.strip_prefix("spotifast-mix:").unwrap_or(text);
+    if let Some(link) = soundcloud_link(text) {
+        return Some(link);
+    }
     if let Some(query) = search_query(text) {
         return Some(format!(
             "spotify:search:{}",
@@ -89,6 +96,30 @@ pub fn parse(text: &str) -> Option<String> {
         return None;
     }
     Some(format!("spotify:{kind}:{id}"))
+}
+
+/// An official SoundCloud permalink (including its short-link host). Parse the
+/// URL rather than matching a string prefix, which would accept lookalike hosts
+/// or embedded credentials. Resolution remains an authenticated backend request.
+pub fn soundcloud_link(text: &str) -> Option<String> {
+    if text.chars().any(char::is_control) {
+        return None;
+    }
+    let mut url = reqwest::Url::parse(text).ok()?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || !matches!(
+            url.host_str()?,
+            "soundcloud.com" | "www.soundcloud.com" | "on.soundcloud.com"
+        )
+        || !url.path_segments()?.any(|part| !part.is_empty())
+    {
+        return None;
+    }
+    url.set_fragment(None);
+    Some(url.into())
 }
 
 /// Decodes a search link once. A path's `+` is literal, not a form-encoded
@@ -162,6 +193,28 @@ fn is_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_scheme_opens_provider_links_without_claiming_their_schemes() {
+        assert_eq!(
+            parse("spotifast-mix:spotify:track:123").as_deref(),
+            Some("spotify:track:123")
+        );
+        assert_eq!(
+            parse("spotifast-mix:https://soundcloud.com/uploader/song#comments").as_deref(),
+            Some("https://soundcloud.com/uploader/song")
+        );
+        for invalid in [
+            "spotifast-mix:spotifast-mix:spotify:track:123",
+            "https://soundcloud.com.evil/uploader/song",
+            "https://user@soundcloud.com/uploader/song",
+            "https://soundcloud.com:8899/uploader/song",
+            "https://soundcloud.com/",
+            "http://soundcloud.com/uploader/song",
+        ] {
+            assert!(parse(invalid).is_none(), "{invalid:?}");
+        }
+    }
 
     #[test]
     fn prerelease_web_and_protocol_links_keep_the_prerelease_id() {

@@ -1,3 +1,4 @@
+#error Spotifast Mix ships a portable ZIP only. Inherited upstream installers are disabled.
 ﻿; No longer shipped: releases after 0.14.2 ship only the Windows Installer
 ; package (spotifast.wxs), which takes over a copy this script installed.
 ; test-msi.py still builds it to make such a copy to take over.

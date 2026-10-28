@@ -420,12 +420,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if app.shared_grant && !in_use {
                 gettext(
                     locale,
-                    "You're still signed in through the shared app Spotifast used before, which Spotify can stop accepting at any time. Set up your own app to keep listening.",
+                    "You're still signed in through the shared app Spotifast Mix used before, which Spotify can stop accepting at any time. Set up your own app to keep listening.",
                 )
             } else {
                 gettext(
                     locale,
-                    "Spotifast signs in through your own free Spotify app.",
+                    "Spotifast Mix signs in through your own free Spotify app.",
                 )
             },
         ),
@@ -445,7 +445,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     "Supported requests use your app. Other requests use the shared app.",
                 )
             } else {
-                gettext(locale, "Spotifast uses your app for Spotify's Web API.")
+                gettext(locale, "Spotifast Mix uses your app for Spotify's Web API.")
             },
         )
         .when(in_use),
@@ -458,6 +458,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         )
         .when(!in_use && wanted.is_some()),
         RowText::new(sign_out.clone(), account.clone()),
+        RowText::new(
+            "SoundCloud account",
+            "Connect or disconnect SoundCloud with your own app credentials.",
+        ),
     ];
     if section_matches(&needle, &account, &account_rows) {
         any_visible = true;
@@ -512,6 +516,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 });
                 ui.add_space(10.0);
             }
+            filtered_row(ui, &palette, &needle, &account, &account_rows[5], |ui| {
+                if theme::pill_button(ui, &palette, "Manage SoundCloud", false).clicked() {
+                    app.actions
+                        .push(Action::Integration(crate::integration::Action::Open(
+                            crate::integration::View::Accounts,
+                        )));
+                }
+            });
             // What is typed stays a draft while it is empty: clearing the
             // field must not forget the app the session signs in with.
             let draft_id = egui::Id::new("personal-web-client-id-draft");
@@ -623,7 +635,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let autoplay = gettext(locale, "Autoplay");
     let gapless = gettext(locale, "Gapless playback");
     let keep_playing = gettext(locale, "Keep music playing when the window closes");
-    let update_checks = gettext(locale, "Automatic update checks");
+    let update_checks = gettext(locale, "Updates");
     let audio_cache = gettext(locale, "Audio cache");
     let apply_playback = gettext(locale, "Apply and restart playback");
     let apply_playback_note = gettext(locale, "Restart local playback to apply these settings.");
@@ -671,19 +683,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             super::keys::platform_shortcut(
                 &gettext(
                     locale,
-                    "Spotifast hides to the system tray. Quit from the tray menu or with Ctrl+Q.",
+                    "Spotifast Mix hides to the system tray. Quit from the tray menu or with Ctrl+Q.",
                 ),
                 // macOS has a menu bar where the others have a tray (#1006).
                 &gettext(
                     locale,
-                    "Spotifast hides to the menu bar. Quit from its menu-bar icon or with Cmd+Q.",
+                    "Spotifast Mix hides to the menu bar. Quit from its menu-bar icon or with Cmd+Q.",
                 ),
             )
             .to_owned(),
         ),
         RowText::new(
             update_checks.clone(),
-            gettext(locale, "Checks GitHub once a day. No personal data is sent."),
+            crate::updates::UNAVAILABLE,
         ),
         RowText::new(
             gettext(locale, "Output buffer"),
@@ -705,7 +717,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 locale,
                 "Downloads in the background. You choose when to restart.",
             ),
-        ),
+        )
+        .when(crate::updates::ENABLED),
         RowText::new(
             gettext(locale, "MacBook notch widget"),
             gettext(
@@ -719,7 +732,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             show_in_dock.clone(),
             gettext(
                 locale,
-                "When off, Spotifast lives in the menu bar and leaves Cmd+Tab. Open it from its menu-bar icon.",
+                "When off, Spotifast Mix lives in the menu bar and leaves Cmd+Tab. Open it from its menu-bar icon.",
             ),
         )
         .when(cfg!(target_os = "macos")),
@@ -959,30 +972,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     changed = true;
                 }
             });
-            filtered_row(ui, &palette, &needle, &playback, &playback_rows[7], |ui| {
-                if widgets::switch(
-                    ui,
-                    &palette,
-                    &update_checks,
-                    &mut app.settings.check_for_updates,
-                )
-                .changed()
-                {
-                    changed = true;
-                }
-            });
-            filtered_row(ui, &palette, &needle, &playback, &playback_rows[12], |ui| {
-                if widgets::switch(
-                    ui,
-                    &palette,
-                    &download_updates,
-                    &mut app.settings.download_updates_automatically,
-                )
-                .changed()
-                {
-                    changed = true;
-                }
-            });
+            filtered_row(ui, &palette, &needle, &playback, &playback_rows[7], |_| {});
             #[cfg(windows)]
             filtered_row(ui, &palette, &needle, &playback, &playback_rows[8], |ui| {
                 ui.horizontal(|ui| {
@@ -1200,7 +1190,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             custom_titlebar.clone(),
             gettext(
                 locale,
-                "Draw Spotifast's own title bar and window buttons instead of the desktop's.",
+                "Draw Spotifast Mix's own title bar and window buttons instead of the desktop's.",
             ),
         )
         .when(show_custom_titlebar),
@@ -1873,20 +1863,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 0 => gettext(
                     locale,
                     // Translators: {folder} is the path of the MilkDrop presets folder.
-                    "None yet in {folder}. Add .milk files here. Spotifast downloads presets when MilkDrop first opens with an empty folder.",
+                    "None yet in {folder}. Add .milk files here. Spotifast Mix downloads presets when MilkDrop first opens with an empty folder.",
                 )
                 .replace("{folder}", &folder),
                 1 => gettext(
                     locale,
                     // Translators: {folder} is the path of the MilkDrop presets folder.
-                    "One preset in {folder}. Add .milk files here. Spotifast downloads presets when MilkDrop first opens with an empty folder.",
+                    "One preset in {folder}. Add .milk files here. Spotifast Mix downloads presets when MilkDrop first opens with an empty folder.",
                 )
                 .replace("{folder}", &folder),
                 n => ngettext(
                     locale,
                     // Translators: {count} is the number of presets, {folder} the path of the MilkDrop presets folder.
-                    "{count} preset in {folder}. Add .milk files here. Spotifast downloads presets when MilkDrop first opens with an empty folder.",
-                    "{count} presets in {folder}. Add .milk files here. Spotifast downloads presets when MilkDrop first opens with an empty folder.",
+                    "{count} preset in {folder}. Add .milk files here. Spotifast Mix downloads presets when MilkDrop first opens with an empty folder.",
+                    "{count} presets in {folder}. Add .milk files here. Spotifast Mix downloads presets when MilkDrop first opens with an empty folder.",
                     u32::try_from(n).unwrap_or(u32::MAX),
                 )
                 .replace("{count}", &n.to_string())
@@ -2220,21 +2210,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let about = gettext(locale, "About");
     let built_with = gettext(
         locale,
-        "Built with Rust, egui, and librespot. Not affiliated with Spotify.",
+        "Built with Rust, egui, and librespot. Not affiliated with Spotify or SoundCloud.",
     );
-    let check_for_updates = gettext(locale, "Check for updates");
-    let checking = gettext(locale, "Checking…");
     let keyboard_shortcuts = gettext(locale, "Keyboard shortcuts");
-    let release_notes = gettext(locale, "Release notes");
-    let source_code = gettext(locale, "Source code");
+    let release_notes = "Upstream release notes";
+    let source_code = "Upstream Spotifast";
     let about_rows = [
         RowText::new(
-            format!("Spotifast {}", env!("CARGO_PKG_VERSION")),
+            format!("Spotifast Mix {}", env!("CARGO_PKG_VERSION")),
             built_with.clone(),
         ),
         RowText::new(
-            format!("{check_for_updates} {checking} {release_notes}"),
-            format!("{keyboard_shortcuts} {source_code}"),
+            format!("Updates {release_notes}"),
+            format!(
+                "{} {keyboard_shortcuts} {source_code}",
+                crate::updates::UNAVAILABLE
+            ),
         ),
     ];
     if section_matches(&needle, &about, &about_rows) {
@@ -2246,7 +2237,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui.vertical(|ui| {
                     theme::text(
                         ui,
-                        format!("Spotifast {}", env!("CARGO_PKG_VERSION")),
+                        format!("Spotifast Mix {}", env!("CARGO_PKG_VERSION")),
                         theme::semibold(15.0),
                         palette.text,
                     );
@@ -2259,27 +2250,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 });
             });
             ui.add_space(8.0);
+            theme::text(
+                ui,
+                crate::updates::UNAVAILABLE,
+                theme::regular(13.0),
+                palette.secondary,
+            );
+            ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::splat(8.0);
-                let check_label = if app.update_checking {
-                    &checking
-                } else {
-                    &check_for_updates
-                };
-                if theme::soft_button(ui, &palette, Some(Icon::Refresh), check_label, false)
+                if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), release_notes, false)
                     .clicked()
-                    && !app.update_checking
-                {
-                    app.actions.push(Action::CheckForUpdates);
-                }
-                if theme::soft_button(
-                    ui,
-                    &palette,
-                    Some(Icon::ExternalLink),
-                    &release_notes,
-                    false,
-                )
-                .clicked()
                 {
                     app.actions
                         .push(Action::OpenUrl(RELEASE_NOTES_URL.to_owned()));
@@ -2289,7 +2270,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 {
                     app.actions.push(Action::ShowDialog(Dialog::Shortcuts));
                 }
-                if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), &source_code, false)
+                if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), source_code, false)
                     .clicked()
                 {
                     ui.ctx()
@@ -2347,7 +2328,7 @@ fn start_with_computer_choices(
 
 /// What the row says under its title: how to finish a registration the
 /// system holds for approval, why a start in the tray opens the window
-/// while nothing keeps Spotifast there, or what the choices do.
+/// while nothing keeps Spotifast Mix there, or what the choices do.
 fn start_with_computer_detail(
     locale: crate::i18n::Locale,
     state: Option<fastframe_autostart::State>,
@@ -2358,7 +2339,7 @@ fn start_with_computer_detail(
     if matches!(state, Some(State::NeedsApproval(_))) && choice.is_some() {
         gettext(
             locale,
-            "Allow Spotifast in System Settings, General, Login Items.",
+            "Allow Spotifast Mix in System Settings, General, Login Items.",
         )
     } else if choice == Some(Start::Hidden) && !keeps_running {
         if cfg!(target_os = "macos") {
@@ -2375,12 +2356,12 @@ fn start_with_computer_detail(
     } else if cfg!(target_os = "macos") {
         gettext(
             locale,
-            "Open Spotifast when you log in, with its window or in the menu bar.",
+            "Open Spotifast Mix when you log in, with its window or in the menu bar.",
         )
     } else {
         gettext(
             locale,
-            "Open Spotifast when you log in, with its window or in the tray.",
+            "Open Spotifast Mix when you log in, with its window or in the tray.",
         )
     }
 }
@@ -2639,6 +2620,84 @@ fn eq_curve(ui: &mut egui::Ui, palette: &Palette, settings: &crate::eq::EqSettin
 mod tests {
     use super::{RELEASE_NOTES_URL, RowText, row_matches, section_matches};
 
+    #[test]
+    fn soundcloud_accounts_are_reachable_and_update_installation_is_not_offered() {
+        use crate::integration::{Action as IntegrationAction, View};
+        use crate::model::Action;
+        use egui::accesskit::{Action as AccessibleAction, ActionRequest, TreeId};
+
+        let root = std::env::temp_dir().join(format!(
+            "spotifast-mix-settings-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let mut app = crate::app::App::new(
+            &crate::backend::Waker::default(),
+            crate::paths::AppDirs {
+                config: root.join("config"),
+                state: root.join("state"),
+                cache: root.join("cache"),
+            },
+            crate::settings::Settings::default(),
+            crate::app::AppOptions {
+                media_controls: false,
+                restore_sign_in: false,
+                tray: false,
+                autostart: false,
+            },
+        );
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::theme::install(&ctx);
+        let frame = |app: &mut crate::app::App, filter: &str, events| {
+            ctx.data_mut(|data| {
+                data.insert_temp(egui::Id::new(super::SETTINGS_FILTER_ID), filter.to_owned());
+            });
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 700.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| super::show(app, ui),
+            );
+            output.textures_delta.clear();
+            output.platform_output.accesskit_update.unwrap()
+        };
+        let tree = frame(&mut app, "soundcloud", vec![]);
+        let account_button = tree
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Manage SoundCloud"))
+            .map(|(id, _)| *id)
+            .expect("SoundCloud must be reachable from Account settings");
+        frame(
+            &mut app,
+            "soundcloud",
+            vec![egui::Event::AccessKitActionRequest(ActionRequest {
+                target_tree: TreeId::ROOT,
+                target_node: account_button,
+                action: AccessibleAction::Click,
+                data: None,
+            })],
+        );
+        assert!(app.actions.iter().any(|action| matches!(
+            action,
+            Action::Integration(IntegrationAction::Open(View::Accounts))
+        )));
+        let tree = frame(&mut app, "updates", vec![]);
+        assert!(!tree.nodes.iter().any(|(_, node)| matches!(
+            node.label(),
+            Some(
+                "Automatic update checks" | "Download updates automatically" | "Check for updates"
+            )
+        )));
+        app.backend.shutdown();
+    }
+
     /// macOS has a menu bar where Linux and Windows have a tray, and the
     /// start-up choices say so (#1006).
     #[test]
@@ -2785,7 +2844,7 @@ mod tests {
     }
 
     #[test]
-    fn release_notes_open_the_running_version_release_page() {
+    fn upstream_release_notes_are_explicitly_the_base_version_reference() {
         assert_eq!(
             RELEASE_NOTES_URL,
             format!(

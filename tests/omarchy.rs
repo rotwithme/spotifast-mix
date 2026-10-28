@@ -18,10 +18,11 @@ fn omarchy_hook_replaces_only_its_palette_and_tolerates_a_stopped_app() {
         Scratch(std::env::temp_dir().join(format!("spotifast omarchy {}", rand::random::<u64>())));
     let source = scratch.0.join("current theme");
     let config = scratch.0.join("config");
-    let target = config.join("spotifast/themes");
+    let target = config.join("spotifast-mix/themes");
+    let upstream = config.join("spotifast/themes");
     let bin = scratch.0.join("bin");
     let log = scratch.0.join("commands");
-    for dir in [&source, &target, &bin] {
+    for dir in [&source, &target, &upstream, &bin] {
         std::fs::create_dir_all(dir).unwrap();
     }
     // Nix provides tools through PATH without /bin or /usr/bin. Keep that
@@ -36,7 +37,7 @@ fn omarchy_hook_replaces_only_its_palette_and_tolerates_a_stopped_app() {
     )
     .unwrap();
     std::fs::write(
-        bin.join("spotifast"),
+        bin.join("spotifast-mix"),
         format!(
             "#!{}\nprintf '%s\\n' \"$*\" >> \"$SPOTIFAST_HOOK_TEST_LOG\"\nexit 1\n",
             shell.display()
@@ -44,7 +45,7 @@ fn omarchy_hook_replaces_only_its_palette_and_tolerates_a_stopped_app() {
     )
     .unwrap();
     std::fs::set_permissions(
-        bin.join("spotifast"),
+        bin.join("spotifast-mix"),
         std::fs::Permissions::from_mode(0o755),
     )
     .unwrap();
@@ -56,8 +57,10 @@ fn omarchy_hook_replaces_only_its_palette_and_tolerates_a_stopped_app() {
             ))
             .env("PATH", &command_path)
             .env("XDG_CONFIG_HOME", &config)
-            .env("SPOTIFAST_OMARCHY_THEME_DIR", &source)
-            .env_remove("SPOTIFAST_THEMES_DIR")
+            .env("SPOTIFAST_MIX_OMARCHY_THEME_DIR", &source)
+            .env_remove("SPOTIFAST_MIX_THEMES_DIR")
+            // An upstream override must never redirect the custom hook.
+            .env("SPOTIFAST_THEMES_DIR", &upstream)
             .env("SPOTIFAST_HOOK_TEST_LOG", &log)
             .output()
             .unwrap();
@@ -73,9 +76,14 @@ fn omarchy_hook_replaces_only_its_palette_and_tolerates_a_stopped_app() {
     let outside = scratch.0.join("unrelated.json");
     std::fs::write(&outside, "preserve me").unwrap();
     std::os::unix::fs::symlink(&outside, target.join("omarchy.json")).unwrap();
-    std::fs::write(config.join("spotifast/settings.json"), "unchanged settings").unwrap();
+    std::fs::write(
+        config.join("spotifast-mix/settings.json"),
+        "unchanged settings",
+    )
+    .unwrap();
+    std::fs::write(upstream.join("omarchy.json"), "upstream palette").unwrap();
     for text in [r#"{"base":"dark"}"#, r#"{"base":"light"}"#] {
-        std::fs::write(source.join("spotifast.json"), text).unwrap();
+        std::fs::write(source.join("spotifast-mix.json"), text).unwrap();
         run();
         assert_eq!(
             std::fs::read_to_string(target.join("omarchy.json")).unwrap(),
@@ -87,8 +95,12 @@ fn omarchy_hook_replaces_only_its_palette_and_tolerates_a_stopped_app() {
     }
     assert_eq!(std::fs::read_to_string(&outside).unwrap(), "preserve me");
     assert_eq!(
-        std::fs::read_to_string(config.join("spotifast/settings.json")).unwrap(),
+        std::fs::read_to_string(config.join("spotifast-mix/settings.json")).unwrap(),
         "unchanged settings"
+    );
+    assert_eq!(
+        std::fs::read_to_string(upstream.join("omarchy.json")).unwrap(),
+        "upstream palette"
     );
     assert_eq!(
         std::fs::read_to_string(&log).unwrap(),
@@ -99,8 +111,8 @@ fn omarchy_hook_replaces_only_its_palette_and_tolerates_a_stopped_app() {
         1,
         "no temporary file remains"
     );
-    std::fs::remove_file(source.join("spotifast.json")).unwrap();
-    std::os::unix::fs::symlink(&outside, source.join("spotifast.json")).unwrap();
+    std::fs::remove_file(source.join("spotifast-mix.json")).unwrap();
+    std::os::unix::fs::symlink(&outside, source.join("spotifast-mix.json")).unwrap();
     run();
     assert_eq!(
         std::fs::read_to_string(&log).unwrap(),

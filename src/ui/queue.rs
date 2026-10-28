@@ -13,6 +13,10 @@ use crate::theme::{self, Icon};
 use super::widgets::{self, TrackRow};
 
 pub fn page(app: &mut App, ui: &mut egui::Ui) {
+    if app.integration.local_active {
+        super::mix::queue(app, ui);
+        return;
+    }
     let palette = app.palette;
     ui.add_space(8.0);
     // The queue refreshes on track changes, additions, and while visible.
@@ -128,6 +132,7 @@ pub fn side_panel(app: &mut App, ui: &mut egui::Ui) {
                 }),
             egui::Vec2b::new(false, true),
             |ui| match app.queue_tab {
+                QueueTab::Queue if app.integration.local_active => super::mix::queue(app, ui),
                 QueueTab::Queue => contents(app, ui, true),
                 QueueTab::Recents => recents_contents(app, ui),
             },

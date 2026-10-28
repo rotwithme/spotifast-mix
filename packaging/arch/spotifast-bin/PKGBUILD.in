@@ -1,10 +1,10 @@
 # Maintainer: Carmine Paolino <carmine@paolino.me>
-pkgname=spotifast-bin
+pkgname=spotifast-mix-bin
 pkgver=@VERSION@
 pkgrel=@PKGREL@
 pkgdesc="Native Spotify client"
 arch=('x86_64' 'aarch64')
-url="https://github.com/crmne/spotifast"
+url="https://github.com/unconfigured/spotifast-mix"
 license=('MIT')
 install="${pkgname}.install"
 # alsa-lib and libpipewire are linked directly; the rest are dlopened by winit
@@ -13,12 +13,12 @@ install="${pkgname}.install"
 depends=('dbus' 'alsa-lib' 'libpipewire' 'libglvnd' 'libxkbcommon' 'wayland' 'libx11')
 optdepends=('libxkbcommon-x11: keyboard handling in X11 sessions'
             'pipewire-pulse: PipeWire as the PulseAudio server')
-provides=("spotifast=$pkgver")
-conflicts=('spotifast' 'spotifast-git')
+provides=("spotifast-mix=$pkgver")
+conflicts=('spotifast-mix' 'spotifast-mix-git')
 options=('!debug' '!strip')
-_repo="https://github.com/crmne/spotifast"
-source_x86_64=("${_repo}/releases/download/v${pkgver}/spotifast-v${pkgver}-x86_64-unknown-linux-gnu.tar.gz")
-source_aarch64=("${_repo}/releases/download/v${pkgver}/spotifast-v${pkgver}-aarch64-unknown-linux-gnu.tar.gz")
+_repo="https://github.com/unconfigured/spotifast-mix"
+source_x86_64=("${_repo}/releases/download/v${pkgver}/spotifast-mix-v${pkgver}-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("${_repo}/releases/download/v${pkgver}/spotifast-mix-v${pkgver}-aarch64-unknown-linux-gnu.tar.gz")
 sha256sums_x86_64=('@AMD64_SHA256@')
 sha256sums_aarch64=('@ARM64_SHA256@')
 
@@ -28,18 +28,18 @@ package() {
     x86_64) target="x86_64-unknown-linux-gnu" ;;
     aarch64) target="aarch64-unknown-linux-gnu" ;;
   esac
-  local dir="${srcdir}/spotifast-v${pkgver}-${target}"
+  local dir="${srcdir}/spotifast-mix-v${pkgver}-${target}"
 
-  install -Dm755 "${dir}/spotifast" "${pkgdir}/usr/bin/spotifast"
+  install -Dm755 "${dir}/spotifast-mix" "${pkgdir}/usr/bin/spotifast-mix"
   install -Dm644 "${dir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
   install -Dm644 "${dir}/README.md" "${pkgdir}/usr/share/doc/${pkgname}/README.md"
   install -Dm644 "${dir}/packaging/applications/spotifast.desktop" \
-    "${pkgdir}/usr/share/applications/spotifast.desktop"
+    "${pkgdir}/usr/share/applications/spotifast-mix.desktop"
   install -Dm644 "${dir}/packaging/icons/spotifast.svg" \
-    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/spotifast.svg"
+    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/spotifast-mix.svg"
   # Older release fixtures predate the optional integration.
   if [[ -d "${dir}/contrib/omarchy" ]]; then
-    install -Dm644 "${dir}/contrib/omarchy/spotifast.json.tpl" "${pkgdir}/usr/share/spotifast/omarchy/spotifast.json.tpl"
-    install -Dm755 "${dir}/contrib/omarchy/spotifast-theme" "${pkgdir}/usr/share/spotifast/omarchy/spotifast-theme"
+    install -Dm644 "${dir}/contrib/omarchy/spotifast.json.tpl" "${pkgdir}/usr/share/spotifast-mix/omarchy/spotifast-mix.json.tpl"
+    install -Dm755 "${dir}/contrib/omarchy/spotifast-theme" "${pkgdir}/usr/share/spotifast-mix/omarchy/spotifast-mix-theme"
   fi
 }

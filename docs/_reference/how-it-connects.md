@@ -4,6 +4,12 @@ description: Independent Spotify grants, what is stored, and how API traffic is 
 nav_order: 1
 ---
 
+This page describes the Spotify connections retained in Spotifast Mix. Its
+independent SoundCloud grant, loopback callback, network requests, and isolated
+storage are documented in [Spotifast Mix](spotifast-mix.md#connect-accounts).
+This custom version starts with fresh sign-ins and does not import an upstream
+Spotifast profile.
+
 ## Independent grants, once each
 
 Spotifast uses separate credentials for Web API access and local playback:

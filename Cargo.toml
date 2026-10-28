@@ -1,11 +1,11 @@
 [package]
-name = "spotifast"
-default-run = "spotifast"
+name = "spotifast-mix"
+default-run = "spotifast-mix"
 version = "0.14.2"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
-description = "A native Spotify client"
+description = "A native Spotify and SoundCloud desktop client"
 repository = "https://github.com/crmne/spotifast"
 keywords = ["spotify", "music", "egui", "librespot", "player"]
 categories = ["multimedia::audio"]
@@ -15,7 +15,7 @@ name = "spotifast"
 path = "src/lib.rs"
 
 [[bin]]
-name = "spotifast"
+name = "spotifast-mix"
 path = "src/spotifast.rs"
 
 [dependencies]
@@ -144,7 +144,11 @@ protobuf = "3"
 # Reads a local file's embedded cover and lyrics. The same decoder librespot
 # already plays local files with, with the formats it enables, so nothing
 # new is built.
-symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac"] }
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "aac", "isomp4"] }
+# SoundCloud's official streams are AAC HLS. Parse manifests and extract AAC
+# from MPEG-TS in Rust, without a browser engine or a system media service.
+m3u8-rs = "6"
+mpeg2ts-reader = "0.18.2"
 # Local playback's audio sink is this crate's own (src/sink.rs): librespot's
 # rodio backend unwraps the device open on the player thread, and a release
 # build aborts on panic, so it is left out. rodio supplies the mixer and the

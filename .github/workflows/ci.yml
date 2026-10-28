@@ -115,6 +115,8 @@ jobs:
         run: python3 packaging/test-launchers.py
       - name: Release name migration regressions
         run: python3 packaging/test-release-names.py
+      - name: Fork packaging and publication boundaries
+        run: python3 packaging/windows/test-mix-packaging.py
       - name: Clippy (default features)
         run: mbx clippy --locked --all-targets -- -D warnings
       - name: Clippy (all features)
@@ -188,58 +190,40 @@ jobs:
         shell: pwsh
         run: |
           mbx build --locked
-          $imports = & dumpbin /dependents target\debug\spotifast.exe | Out-String
+          $imports = & dumpbin /dependents target\debug\spotifast-mix.exe | Out-String
           $runtime = $imports | Select-String -Pattern 'MSVCP[0-9_]*\.dll|VCRUNTIME[0-9_]*\.dll'
-          if ($runtime) { throw "Spotifast imports an MSVC runtime:`n$runtime" }
+          if ($runtime) { throw "Spotifast Mix imports an MSVC runtime:`n$runtime" }
           $machine = if ($env:RUNNER_ARCH -eq 'ARM64') { 'AA64 machine \(ARM64\)' } else { '8664 machine \(x64\)' }
-          $headers = & dumpbin /headers target\debug\spotifast.exe | Out-String
-          if ($headers -notmatch $machine) { throw "spotifast.exe is not built for $env:RUNNER_ARCH`:`n$headers" }
+          $headers = & dumpbin /headers target\debug\spotifast-mix.exe | Out-String
+          if ($headers -notmatch $machine) { throw "spotifast-mix.exe is not built for $env:RUNNER_ARCH`:`n$headers" }
 
-      - name: Windows installer syntax and renamed inputs
+      - name: Windows portable ZIP
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
-          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
-          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
-          & $iscc "/DVersion=$version" "/DArch=$arch" "/DBinary=$PWD\target\debug\spotifast.exe" "/DOutputDir=$env:RUNNER_TEMP\spotifast-installer-check" packaging\windows\spotifast.iss
+          & packaging\windows\package-mix.ps1 -NoBuild -BinaryPath target\debug\spotifast-mix.exe -OutputDirectory "$env:RUNNER_TEMP\spotifast-mix-portable"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $archive = Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\spotifast-mix-portable" -Filter '*.zip'
+          if (@($archive).Count -ne 1) { throw 'Expected one portable ZIP.' }
+          $checksum = (Get-Content -LiteralPath ($archive.FullName + '.sha256')).Split(' ')[0]
+          if ((Get-FileHash -LiteralPath $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $checksum) { throw 'Portable checksum mismatch.' }
+          $unpacked = Join-Path $env:RUNNER_TEMP 'spotifast-mix-portable-check'
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $unpacked
+          $expected = @('Getting started.md','LICENSE','README.md','spotifast-mix-portable.txt','spotifast-mix.exe') | Sort-Object
+          $contents = Get-ChildItem -LiteralPath $unpacked
+          if ($contents | Where-Object PSIsContainer) { throw 'Profiles or unexpected directories in portable ZIP.' }
+          $actual = $contents | Select-Object -ExpandProperty Name | Sort-Object
+          if (Compare-Object $expected $actual) { throw 'Unexpected files in portable ZIP.' }
+          & (Join-Path $unpacked 'spotifast-mix.exe') --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # The Windows Installer package, which native-packages builds as the
-      # release does (native-packages.yaml), from the executable built above.
-      - uses: ruby/setup-ruby@v1
-        if: runner.os == 'Windows'
-        with:
-          ruby-version: '4.0'
-      - name: Windows Installer package
+      # The inherited Inno/MSI entrypoints must remain blocked. These tests
+      # exercise that boundary instead of installing an upstream identity.
+      - name: Fork installer isolation regressions
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          dotnet tool install wix --version 5.0.2 --tool-path "$env:RUNNER_TEMP\wix"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "$env:RUNNER_TEMP\wix" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-          $env:PATH = "$env:RUNNER_TEMP\wix;$env:PATH"
-          gem install native-packages --version 0.11.0 --no-document
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
-          $target, $id = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64-pc-windows-msvc', 'windows-arm64' } else { 'x86_64-pc-windows-msvc', 'windows-amd64' }
-          $payload = "dist\msi-input-$target"
-          New-Item -ItemType Directory -Force $payload | Out-Null
-          Copy-Item target\debug\spotifast.exe, README.md, LICENSE, packaging\windows\spotifast-installer.txt $payload
-          native-packages build --version $version --target $id --defer-recipes --output "$env:RUNNER_TEMP\spotifast-msi-check"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # Installs, updates and removes throwaway copies of the package, with
-      # an identity of their own: a running copy, a portable copy, and an
-      # Inno Setup install it takes over (#766 and the updater's contract).
-      - name: Windows Installer install, update and uninstall
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
-          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          python packaging\windows\test-msi.py $iscc -v
+          python packaging\windows\test-mix-packaging.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: macOS bundle identity and helper startup
@@ -248,17 +232,17 @@ jobs:
         run: |
           mbx build --locked
           version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
-          app="$RUNNER_TEMP/spotifast-bundle-check/Spotifast.app"
-          bash packaging/macos/bundle.sh target/debug/spotifast "$app" "$version"
+          app="$RUNNER_TEMP/spotifast-mix-bundle-check/Spotifast Mix.app"
+          bash packaging/macos/bundle.sh target/debug/spotifast-mix "$app" "$version"
           executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
           "$app/Contents/MacOS/$executable" --version
-          # A missing job must reach our error handler, not die during launch.
+          # This custom build rejects update helpers before any app/profile work.
           set +e
-          "$app/Contents/MacOS/$executable" --apply-update "$RUNNER_TEMP/spotifast-missing-job.json" 2> "$RUNNER_TEMP/spotifast-helper-check.log"
+          "$app/Contents/MacOS/$executable" --apply-update "$RUNNER_TEMP/spotifast-mix-missing-job.json" 2> "$RUNNER_TEMP/spotifast-mix-helper-check.log"
           status=$?
           set -e
-          test "$status" -eq 1
-          test -s "$RUNNER_TEMP/spotifast-helper-check.log"
+          test "$status" -eq 2
+          grep -F 'unexpected argument' "$RUNNER_TEMP/spotifast-mix-helper-check.log"
 
   nix:
     name: Nix package
@@ -281,20 +265,7 @@ jobs:
           name: ${{ vars.CACHIX_CACHE }}
           skipPush: true
       - run: nix build .#default
-      # Only a successful main push publishes. PRs and manual branch builds
-      # can read the public cache, but never receive its upload credential.
-      - name: Publish the Nix package closure
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CACHIX_CACHE != ''
-        shell: bash
-        env:
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: |
-          if [ -z "$CACHIX_AUTH_TOKEN" ]; then
-            echo '::error::CACHIX_CACHE is configured but CACHIX_AUTH_TOKEN is missing.'
-            exit 1
-          fi
-          nix path-info --recursive ./result | cachix push "$CACHIX_CACHE"
+      # This unpublished fork validates locally and never uploads a closure.
 
   docs:
     name: docs
@@ -314,4 +285,4 @@ jobs:
         env:
           JEKYLL_ENV: production
         run: |
-          bundle exec jekyll build --destination "$RUNNER_TEMP/spotifast-site"
+          bundle exec jekyll build --destination "$RUNNER_TEMP/spotifast-mix-site"

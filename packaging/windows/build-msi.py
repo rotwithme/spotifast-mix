@@ -127,6 +127,8 @@ def run(command, cwd=None):
 
 
 def build(payload, package, version, arch, defines=()):
+    raise SystemExit("Spotifast Mix v1 ships a portable ZIP only. Use packaging/windows/package-mix.ps1; inherited MSI installation and upstream takeover are disabled.")
+
     payload = Path(payload).resolve()
     package = Path(package).resolve()
     wix_arch, machine = ARCHES[arch]

@@ -12,6 +12,7 @@ mod keys;
 pub mod library;
 pub mod login;
 mod lyrics;
+pub mod mix;
 pub mod new_releases;
 pub mod player_bar;
 mod prerelease;
@@ -41,7 +42,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     for path in winamp::dropped_skins(ctx) {
         app.actions.push(Action::InstallSkin(path));
     }
-    let signed_in = app.is_connected() && app.user.is_some();
+    let signed_in = (app.is_connected() && app.user.is_some())
+        || app.integration.user.is_some()
+        || app.page() == &Page::Mix;
     let connecting = matches!(app.auth, AuthStatus::Connecting | AuthStatus::Starting)
         || (app.is_connected() && app.user.is_none());
     if !signed_in {
@@ -330,7 +333,9 @@ fn central(app: &mut App, ui: &mut egui::Ui) {
                         .show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
                             match page {
+                                Page::Home if !app.is_connected() => mix::show(app, ui),
                                 Page::Home => home::show(app, ui),
+                                Page::Mix => mix::show(app, ui),
                                 Page::TopSongs => collection::top_songs(app, ui),
                                 Page::NewReleases => new_releases::page(app, ui),
                                 Page::Search => search::show(app, ui),

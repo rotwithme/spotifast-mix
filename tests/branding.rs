@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const COMMAND: &str = env!("CARGO_BIN_EXE_spotifast");
+const COMMAND: &str = env!("CARGO_BIN_EXE_spotifast-mix");
 
 struct Scratch(PathBuf);
 
@@ -26,16 +26,16 @@ fn the_command_reports_its_name_and_passes_the_update_version_check() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap().trim(),
-        format!("spotifast {}", env!("CARGO_PKG_VERSION"))
+        format!("spotifast-mix {}", env!("CARGO_PKG_VERSION"))
     );
     let help = Command::new(COMMAND).arg("--help").output().unwrap();
     assert!(help.status.success());
     assert!(
         String::from_utf8(help.stdout)
             .unwrap()
-            .contains("Usage: spotifast")
+            .contains("Usage: spotifast-mix")
     );
-    assert_eq!(spotifast::updates::CONFIG.slug, "spotifast");
+    assert_eq!(spotifast::updates::CONFIG.slug, "spotifast-mix");
 }
 
 /// The app's name before the rename is gone from everything but the past
@@ -110,7 +110,7 @@ fn existing_preferences_and_custom_connect_names_survive_a_save() {
         saved.save(&path);
         assert_eq!(Settings::load(&path), saved);
     }
-    assert_eq!(Settings::default().device_name, "Spotifast");
+    assert_eq!(Settings::default().device_name, "Spotifast Mix");
 }
 
 #[cfg(target_os = "linux")]

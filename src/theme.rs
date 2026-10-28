@@ -170,7 +170,7 @@ pub type ThemePair = fastframe_theme::Pair<Palette>;
 /// user.
 pub fn enable_desktop_themes(catalog: &mut Catalog) {
     catalog.enable_desktop_themes(fastframe_theme::DesktopThemes {
-        slug: "spotifast",
+        slug: "spotifast-mix",
         omarchy_template: include_str!("../contrib/omarchy/spotifast.json.tpl"),
         // The template has not changed since it first shipped.
         omarchy_previous_templates: &[],
@@ -226,7 +226,7 @@ fn status_detail(status: Option<fastframe_theme::Status>, locale: Locale) -> Cow
         ),
         Status::Problem(_) => gettext(
             locale,
-            "Custom themes could not be loaded. Run spotifast reload-themes to try again.",
+            "Custom themes could not be loaded. Run spotifast-mix reload-themes to try again.",
         ),
     }
 }
@@ -1116,7 +1116,7 @@ mod tests {
         let lines = |text: &str| text.replace("\r\n", "\n");
         assert_eq!(
             lines(include_str!("../contrib/omarchy/spotifast-theme")),
-            lines(&fastframe_theme::omarchy::hook_script("spotifast"))
+            lines(&fastframe_theme::omarchy::hook_script("spotifast-mix"))
         );
         assert_eq!(
             lines(include_str!("../contrib/omarchy/spotifast.json.tpl")),

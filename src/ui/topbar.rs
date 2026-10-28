@@ -399,6 +399,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             pick_image(&user.images, app.art_px(28.0)).map(str::to_string),
                         )
                     })
+                    .or_else(|| {
+                        app.integration.user.as_ref().map(|user| {
+                            (
+                                format!("SoundCloud: {}", user.username),
+                                user.avatar_url.clone(),
+                            )
+                        })
+                    })
                     .unwrap_or_default();
                 let (rect, response) =
                     ui.allocate_exact_size(Vec2::splat(AVATAR_SIZE), Sense::click());
@@ -445,6 +453,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     .align(egui::RectAlign::BOTTOM_END)
                     .show(|ui| {
                         ui.set_width(200.0);
+                        if ui.button("Manage accounts").clicked() {
+                            app.actions.push(Action::Integration(
+                                crate::integration::Action::Open(
+                                    crate::integration::View::Accounts,
+                                ),
+                            ));
+                            ui.close();
+                        }
                         ui.add_space(4.0);
                         // The plan sits right under the name, as one block:
                         // a row of its own each would put a control's height

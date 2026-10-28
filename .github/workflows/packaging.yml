@@ -37,8 +37,13 @@ on:
 permissions:
   contents: read
 
+# Publication is disabled for this unpublished custom fork.
+# No distribution destination or fork signing authority is configured.
+# These inherited recipes require identity review before re-enabling.
+# Build/test validation remains active in ci.yml, including portable ZIP checks.
 jobs:
   packaging:
+    if: ${{ false }}
     permissions:
       contents: write
     uses: crmne/native-packages/.github/workflows/package.yml@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
@@ -51,6 +56,7 @@ jobs:
     secrets: inherit
 
   homebrew:
+    if: ${{ false }}
     name: Homebrew install (macOS)
     needs: packaging
     runs-on: macos-latest
@@ -84,6 +90,7 @@ jobs:
   # carries no libraries of its own, so the runner supplies them as a
   # desktop would. Runners have no FUSE: it unpacks itself to run.
   appimage:
+    if: ${{ false }}
     name: AppImage (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -148,6 +155,7 @@ jobs:
           (cd published && sha256sum --check --strict appimage-checksums.txt)
 
   installation:
+    if: ${{ false }}
     name: Install (${{ matrix.os }}, ${{ matrix.image }})
     needs: packaging
     runs-on: ${{ matrix.os }}

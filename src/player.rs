@@ -70,7 +70,10 @@ impl EngineConfig {
     /// A stable Connect device id derived from the name, so Spotify keeps
     /// recognising this computer across restarts.
     pub fn device_id(&self) -> String {
-        hex(&Sha1::digest(self.device_name.as_bytes()))
+        let mut identity = Sha1::new();
+        identity.update(b"spotifast-mix\0");
+        identity.update(self.device_name.as_bytes());
+        hex(&identity.finalize())
     }
 
     pub fn open_cache(&self) -> Result<Cache> {
@@ -197,6 +200,9 @@ pub struct LocalState {
     /// `Paused` that brings the position counts as a seek for media
     /// controls, which would otherwise count on past the end (#587).
     pub replay_pending: bool,
+    /// The original Connect decoder reported a completion belonging to the
+    /// song Local mix interrupted. It cannot take over the player bar/output.
+    pub output_suppressed: bool,
 }
 
 /// What local playback was doing when its session ended, so the engine
@@ -320,6 +326,134 @@ pub enum EngineEvent {
 
 pub type Notify = Arc<dyn Fn(EngineEvent) + Send + Sync>;
 
+/// Two independent sessions share one audible output. A late Connect pause
+/// cannot leak sound into a newly started mix, including already queued PCM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputOwner {
+    Connect,
+    LocalMix,
+}
+
+static OUTPUT_OWNER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static OUTPUT_TRANSITIONS: Mutex<OutputTransitions> = Mutex::new(OutputTransitions {
+    connect_request: 0,
+    captured_request: 0,
+    connect_paused: false,
+    resume_allowed: false,
+});
+
+struct OutputTransitions {
+    connect_request: u64,
+    captured_request: u64,
+    connect_paused: bool,
+    resume_allowed: bool,
+}
+
+impl OutputTransitions {
+    fn begin_mix(&mut self) {
+        self.captured_request = self.connect_request;
+        self.resume_allowed = self.connect_paused;
+    }
+    fn new_connect_request(&mut self) {
+        self.connect_request = self.connect_request.wrapping_add(1);
+        self.connect_paused = false;
+    }
+    fn connect_pause(&mut self) {
+        self.connect_paused = true;
+        self.resume_allowed = true;
+    }
+    fn may_activate(&self) -> bool {
+        self.connect_request != self.captured_request || self.resume_allowed
+    }
+}
+type OutputRegistry = Mutex<Vec<(OutputOwner, std::sync::Weak<AudioControl>)>>;
+static OUTPUTS: std::sync::OnceLock<OutputRegistry> = std::sync::OnceLock::new();
+
+fn owns_output(owner: OutputOwner) -> bool {
+    OUTPUT_OWNER.load(std::sync::atomic::Ordering::Acquire) == owner as u8
+}
+
+pub async fn claim_output(owner: OutputOwner) {
+    {
+        let mut transitions = OUTPUT_TRANSITIONS.lock().unwrap_or_else(|p| p.into_inner());
+        if owner == OutputOwner::LocalMix && !owns_output(owner) {
+            transitions.begin_mix();
+        }
+        OUTPUT_OWNER.store(owner as u8, std::sync::atomic::Ordering::Release);
+    }
+    let outputs: Vec<_> = {
+        let mut registered = OUTPUTS
+            .get_or_init(Mutex::default)
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        registered.retain(|(_, output)| output.strong_count() > 0);
+        registered
+            .iter()
+            .filter(|(other, _)| *other != owner)
+            .filter_map(|(_, output)| output.upgrade())
+            .collect()
+    };
+    let _ = tokio::task::spawn_blocking(move || {
+        for output in outputs {
+            output.interrupt();
+        }
+    })
+    .await;
+}
+
+pub(crate) fn owned_sink(
+    inner: Box<dyn Sink>,
+    control: Arc<AudioControl>,
+    owner: OutputOwner,
+) -> Box<dyn Sink> {
+    OUTPUTS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .push((owner, Arc::downgrade(&control)));
+    Box::new(OwnedSink {
+        inner,
+        control,
+        owner,
+    })
+}
+
+struct OwnedSink {
+    inner: Box<dyn Sink>,
+    control: Arc<AudioControl>,
+    owner: OutputOwner,
+}
+
+impl Sink for OwnedSink {
+    fn start(&mut self) -> librespot_playback::audio_backend::SinkResult<()> {
+        if owns_output(self.owner) {
+            self.control.track_changed();
+            self.inner.start()
+        } else {
+            Ok(())
+        }
+    }
+    fn stop(&mut self) -> librespot_playback::audio_backend::SinkResult<()> {
+        self.inner.stop()
+    }
+    fn write(
+        &mut self,
+        packet: librespot_playback::decoder::AudioPacket,
+        converter: &mut librespot_playback::convert::Converter,
+    ) -> librespot_playback::audio_backend::SinkResult<()> {
+        if owns_output(self.owner) {
+            self.inner.write(packet, converter)
+        } else {
+            if let Ok(samples) = packet.samples() {
+                std::thread::sleep(Duration::from_secs_f64(
+                    samples.len() as f64 / (2.0 * 44_100.0),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 /// The parts of an engine that outlive its session (#268). librespot's
 /// player keeps playing what it has already fetched when the session drops;
 /// handed to the next engine, the song carries on through the reconnect
@@ -395,6 +529,129 @@ pub struct Engine {
     /// The player came from a dropped session and still plays what that
     /// session left it, until something is loaded through this one.
     carrying: std::sync::atomic::AtomicBool,
+}
+
+/// A decoder for the independent local mix. This player deliberately has no
+/// Spirc: only the mixed queue decides which provider and occurrence follows.
+pub struct StandalonePlayer {
+    player: Arc<Player>,
+    mixer: Arc<dyn Mixer>,
+    audio: Arc<AudioControl>,
+    loads: Arc<Mutex<std::collections::VecDeque<u64>>>,
+}
+
+type StartedPlayer = (
+    Arc<Player>,
+    Arc<dyn Mixer>,
+    Arc<Mutex<LocalState>>,
+    Arc<AudioControl>,
+);
+
+pub enum StandaloneEvent {
+    Player { generation: u64, event: PlayerEvent },
+    Error { generation: u64, message: String },
+}
+
+pub type StandaloneNotify = Arc<dyn Fn(StandaloneEvent) + Send + Sync>;
+
+impl StandalonePlayer {
+    pub fn new(config: &EngineConfig, session: &Session, notify: StandaloneNotify) -> Result<Self> {
+        let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let error_generation = Arc::clone(&generation);
+        let error_notify = Arc::clone(&notify);
+        let report: Notify = Arc::new(move |event| {
+            if let EngineEvent::State(state) = event
+                && let Some(message) = state.error
+            {
+                error_notify(StandaloneEvent::Error {
+                    generation: error_generation.load(std::sync::atomic::Ordering::Relaxed),
+                    message,
+                });
+            }
+        });
+        let (player, mixer, _, audio) =
+            Engine::start_player_for(config, session, &report, OutputOwner::LocalMix)?;
+        let mut events = player.get_player_event_channel();
+        let loads = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let pending = Arc::clone(&loads);
+        tokio::spawn(async move {
+            let mut current = 0;
+            let mut request_id = None;
+            while let Some(event) = events.recv().await {
+                if let PlayerEvent::PlayRequestIdChanged { play_request_id } = &event {
+                    request_id = Some(*play_request_id);
+                    if let Some(next) = pending
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .pop_front()
+                    {
+                        current = next;
+                        generation.store(current, std::sync::atomic::Ordering::Relaxed);
+                    }
+                } else if let (Some(expected), Some(actual)) =
+                    (request_id, event.get_play_request_id())
+                    && expected != actual
+                {
+                    continue;
+                }
+                notify(StandaloneEvent::Player {
+                    generation: current,
+                    event,
+                });
+            }
+        });
+        Ok(Self {
+            player,
+            mixer,
+            audio,
+            loads,
+        })
+    }
+
+    pub fn set_session(&self, session: Session) {
+        self.player.set_session(session);
+    }
+
+    pub fn load(&self, uri: &str, position_ms: u32, play: bool, generation: u64) -> Result<()> {
+        let uri = SpotifyUri::from_uri(uri)?;
+        self.loads
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push_back(generation);
+        self.audio.track_changed();
+        self.player.load(uri, play, position_ms);
+        Ok(())
+    }
+
+    pub fn play(&self) {
+        self.player.play();
+    }
+    pub fn pause(&self) {
+        self.player.pause();
+    }
+    pub fn stop(&self) {
+        self.player.stop();
+    }
+    pub fn seek(&self, position_ms: u32) {
+        self.player.seek(position_ms);
+    }
+    pub fn volume(&self, volume: u16) {
+        self.mixer.set_volume(volume);
+    }
+
+    /// The old decoder is silenced before a different provider opens output.
+    /// The fade can wait for the device, so never run it on a UI/runtime thread.
+    pub async fn quiesce(&self) {
+        let audio = Arc::clone(&self.audio);
+        let _ = tokio::task::spawn_blocking(move || audio.interrupt()).await;
+        self.player.stop();
+    }
+}
+
+impl Drop for StandalonePlayer {
+    fn drop(&mut self) {
+        self.player.stop();
+    }
 }
 
 impl Engine {
@@ -498,17 +755,20 @@ impl Engine {
     }
 
     /// A new player, with the mixer, output and state it plays through.
-    #[allow(clippy::type_complexity)]
     fn start_player(
         config: &EngineConfig,
         session: &Session,
         notify: &Notify,
-    ) -> Result<(
-        Arc<Player>,
-        Arc<dyn Mixer>,
-        Arc<Mutex<LocalState>>,
-        Arc<AudioControl>,
-    )> {
+    ) -> Result<StartedPlayer> {
+        Self::start_player_for(config, session, notify, OutputOwner::Connect)
+    }
+
+    fn start_player_for(
+        config: &EngineConfig,
+        session: &Session,
+        notify: &Notify,
+        owner: OutputOwner,
+    ) -> Result<StartedPlayer> {
         let normalisation_factor = Arc::new(std::sync::atomic::AtomicU64::new(1.0f64.to_bits()));
         let player_config = PlayerConfig {
             bitrate: config.bitrate(),
@@ -550,6 +810,7 @@ impl Engine {
             &mixer,
             Arc::clone(&normalisation_factor),
             Arc::clone(&audio),
+            owner,
         );
         let player = Player::new(player_config, session.clone(), volume, sink_builder);
         let events = player.get_player_event_channel();
@@ -558,6 +819,8 @@ impl Engine {
             Arc::clone(&state),
             Arc::clone(notify),
             Arc::clone(&audio),
+            owner,
+            Arc::downgrade(&player),
         ));
         Ok((player, mixer, state, audio))
     }
@@ -847,6 +1110,7 @@ fn sink_builder(
     mixer: &Arc<dyn Mixer>,
     normalisation: Arc<std::sync::atomic::AtomicU64>,
     audio: Arc<AudioControl>,
+    owner: OutputOwner,
 ) -> SinkAndVolume {
     let device = config.audio_device.clone();
     let buffer_ms = config.buffer_ms;
@@ -877,7 +1141,8 @@ fn sink_builder(
                 RodioSink::new(device, report, volume, buffer_ms, Arc::clone(&audio))
                     .on_device(saved),
             );
-            Box::new(Tapped::new(
+            let control = Arc::clone(&audio);
+            let tapped = Box::new(Tapped::new(
                 sink,
                 audio,
                 tap,
@@ -885,7 +1150,8 @@ fn sink_builder(
                 false,
                 eq,
                 normalisation,
-            )) as Box<dyn Sink>
+            )) as Box<dyn Sink>;
+            owned_sink(tapped, control, owner)
         }),
         Box::new(NoOpVolume),
     )
@@ -922,6 +1188,8 @@ async fn run_events(
     state: Arc<Mutex<LocalState>>,
     notify: Notify,
     audio: Arc<AudioControl>,
+    owner: OutputOwner,
+    player: std::sync::Weak<Player>,
 ) {
     let mut play_request_id = None;
     while let Some(event) = events.recv().await {
@@ -930,6 +1198,12 @@ async fn run_events(
         } = &event
         {
             play_request_id = Some(*next);
+            if owner == OutputOwner::Connect {
+                OUTPUT_TRANSITIONS
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .new_connect_request();
+            }
             continue;
         }
         if let (Some(current), Some(incoming)) = (play_request_id, event.get_play_request_id())
@@ -937,10 +1211,40 @@ async fn run_events(
         {
             continue;
         }
+        if owner == OutputOwner::Connect {
+            if matches!(event, PlayerEvent::Paused { .. }) {
+                OUTPUT_TRANSITIONS
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .connect_pause();
+            }
+            if matches!(event, PlayerEvent::Playing { .. }) && !owns_output(OutputOwner::Connect) {
+                let may_activate = OUTPUT_TRANSITIONS
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .may_activate();
+                if may_activate {
+                    claim_output(OutputOwner::Connect).await;
+                    audio.track_changed();
+                } else if let Some(player) = player.upgrade() {
+                    // The decoder finished an old load after the user started
+                    // Local mix. Its queue stays intact, paused for later.
+                    player.pause();
+                }
+            }
+            if matches!(event, PlayerEvent::Playing { .. }) && owns_output(OutputOwner::Connect) {
+                OUTPUT_TRANSITIONS
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .connect_paused = false;
+            }
+        }
         audio.handle_player_event(&event);
         let snapshot = {
             let mut current = state.lock().unwrap_or_else(|p| p.into_inner());
-            if apply_event(&mut current, event) {
+            let suppressed = owner == OutputOwner::Connect && !owns_output(OutputOwner::Connect);
+            let suppression_changed = set(&mut current.output_suppressed, suppressed);
+            if apply_event(&mut current, event) || suppression_changed {
                 Some(current.clone())
             } else {
                 None
@@ -1258,6 +1562,97 @@ fn decode_folder_name(encoded: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_connect_load_started_before_local_mix_cannot_take_output_back() {
+        let mut transitions = OutputTransitions {
+            connect_request: 0,
+            captured_request: 0,
+            connect_paused: false,
+            resume_allowed: false,
+        };
+        transitions.new_connect_request(); // Original Spotify track is loading.
+        transitions.begin_mix(); // The user starts SoundCloud before it completes.
+        assert!(
+            !transitions.may_activate(),
+            "the old load's Playing is stale"
+        );
+        transitions.new_connect_request(); // A phone subsequently chooses a song.
+        assert!(
+            transitions.may_activate(),
+            "a newer Connect choice may take over"
+        );
+        transitions.begin_mix();
+        assert!(!transitions.may_activate());
+        transitions.connect_pause(); // Its pause is acknowledged before a resume.
+        assert!(
+            transitions.may_activate(),
+            "a later resume of the same song is genuine"
+        );
+    }
+
+    #[test]
+    fn only_the_selected_session_can_feed_native_output() {
+        use librespot_playback::convert::Converter;
+        use librespot_playback::decoder::AudioPacket;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct Recorder(Arc<AtomicUsize>);
+        impl Sink for Recorder {
+            fn start(&mut self) -> librespot_playback::audio_backend::SinkResult<()> {
+                Ok(())
+            }
+            fn stop(&mut self) -> librespot_playback::audio_backend::SinkResult<()> {
+                Ok(())
+            }
+            fn write(
+                &mut self,
+                _: AudioPacket,
+                _: &mut Converter,
+            ) -> librespot_playback::audio_backend::SinkResult<()> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+        }
+        struct RestoreOwner(u8);
+        impl Drop for RestoreOwner {
+            fn drop(&mut self) {
+                OUTPUT_OWNER.store(self.0, Ordering::Release);
+            }
+        }
+        let _restore =
+            RestoreOwner(OUTPUT_OWNER.swap(OutputOwner::LocalMix as u8, Ordering::AcqRel));
+        let connect = Arc::new(AtomicUsize::new(0));
+        let mix = Arc::new(AtomicUsize::new(0));
+        let mut connect_sink = owned_sink(
+            Box::new(Recorder(Arc::clone(&connect))),
+            AudioControl::new(20),
+            OutputOwner::Connect,
+        );
+        let mut mix_sink = owned_sink(
+            Box::new(Recorder(Arc::clone(&mix))),
+            AudioControl::new(20),
+            OutputOwner::LocalMix,
+        );
+        let mut converter = Converter::new(None);
+        connect_sink
+            .write(AudioPacket::Samples(vec![0.0; 2]), &mut converter)
+            .unwrap();
+        mix_sink
+            .write(AudioPacket::Samples(vec![0.0; 2]), &mut converter)
+            .unwrap();
+        assert_eq!(connect.load(Ordering::Relaxed), 0);
+        assert_eq!(mix.load(Ordering::Relaxed), 1);
+        OUTPUT_OWNER.store(OutputOwner::Connect as u8, Ordering::Release);
+        connect_sink
+            .write(AudioPacket::Samples(vec![0.0; 2]), &mut converter)
+            .unwrap();
+        mix_sink
+            .write(AudioPacket::Samples(vec![0.0; 2]), &mut converter)
+            .unwrap();
+        assert_eq!(connect.load(Ordering::Relaxed), 1);
+        assert_eq!(mix.load(Ordering::Relaxed), 1);
+    }
+
     #[test]
     fn loading_another_song_keeps_repeat_with_or_without_shuffle() {
         for shuffle in [None, Some(false), Some(true)] {
@@ -1856,6 +2251,11 @@ mod tests {
         let id = config.device_id();
         assert_eq!(id.len(), 40);
         assert_eq!(id, config.device_id());
+        assert_ne!(
+            id,
+            hex(&Sha1::digest(config.device_name.as_bytes())),
+            "the fork must not collide with upstream's identically named device"
+        );
     }
 
     /// A track that was playing or paused is remembered with its position;

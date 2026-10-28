@@ -394,6 +394,16 @@ pub fn popup(app: &mut App, ctx: &egui::Context) {
         .show(ctx, |ui| {
             super::widgets::menu_frame(&palette).show(ui, |ui| {
                 ui.set_width(width);
+                ui.label("Playback session");
+                super::mix::session_selector(app, ui);
+                if ui.button("Open local mix queue").clicked() {
+                    app.actions.push(Action::Integration(crate::integration::Action::Open(crate::integration::View::Queue)));
+                    ui.close();
+                }
+                ui.separator();
+                if app.integration.local_active {
+                    ui.label("Choosing a Spotify device pauses Local mix. The mixed queue stays on this computer.");
+                }
                 ui.horizontal(|ui| {
                     ui.add_space(6.0);
                     theme::text(

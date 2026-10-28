@@ -1,8 +1,7 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -10,8 +9,13 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# Publication is disabled for this unpublished custom fork.
+# No distribution destination or fork signing authority is configured.
+# These inherited recipes require identity review before re-enabling.
+# Build/test validation remains active in ci.yml, including portable ZIP checks.
 jobs:
   build:
+    if: ${{ false }}
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     env:
@@ -172,6 +176,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: ${{ false }}
     name: windows (${{ matrix.target }})
     needs: build
     # x64 for both targets: Azure Artifact Signing doesn't run on Arm
@@ -275,6 +280,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: ${{ false }}
     name: macOS universal app
     runs-on: macos-latest
     env:
@@ -335,6 +341,7 @@ jobs:
   # sandbox packaging/flatpak describes, so nothing compiles twice. Flathub
   # builds from source on its own machines, from the manifest beside it.
   flatpak:
+    if: ${{ false }}
     name: Flatpak bundle
     needs: build
     runs-on: ubuntu-latest
@@ -364,11 +371,11 @@ jobs:
           if-no-files-found: error
 
   publish:
+    if: ${{ false }}
     name: GitHub release
     # The bundle is welcome but not required: a Flatpak failure must not
     # hold the release.
     needs: [build, windows, macos, flatpak]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.windows.result == 'success' && needs.macos.result == 'success' }}
     runs-on: ubuntu-latest
     # Publishing waits for the maintainer's approval, and only this job can
     # read the release signing key (v* tags only).
@@ -418,8 +425,8 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
 
   packaging:
+    if: ${{ false }}
     # The optional Flatpak job may fail without blocking native packages.
-    if: ${{ !cancelled() && needs.publish.result == 'success' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
     needs: publish
     uses: ./.github/workflows/packaging.yml
     with:

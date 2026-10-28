@@ -4,6 +4,12 @@ description: What the queue shows, what Add to queue does, and what the app prom
 nav_order: 2
 ---
 
+These rules describe Spotify Connect. Spotifast Mix also has an independent
+[Local mix session](spotifast-mix.md#spotify-connect-and-local-mix), whose manual
+queue precedes its collection and whose duplicate entries have distinct occurrence
+IDs. Switching sessions preserves each queue and position. SoundCloud songs
+never enter Spotify's queue or device-transfer requests.
+
 The queue is the list of what plays next. It has two parts. On top,
 under **Playing next**, are the songs you queued yourself. Below them,
 under **Next up**, are the songs that come next in whatever playlist or

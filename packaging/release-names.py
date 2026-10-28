@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check a release's Spotifast downloads and write their checksums."""
+"""Check a release's Spotifast Mix downloads and write their checksums."""
 
 import argparse
 import fnmatch
@@ -20,7 +20,7 @@ def update_information(arch):
     """What each AppImage must carry for AppImageUpdate and the updaters
     built on it: the newest stable release's .zsync file for its own
     architecture."""
-    return f"gh-releases-zsync|crmne|spotifast|latest|spotifast-*-{arch}.AppImage.zsync"
+    return f"gh-releases-zsync|unconfigured|spotifast-mix|latest|spotifast-mix-*-{arch}.AppImage.zsync"
 
 
 def section(data, name):
@@ -78,13 +78,13 @@ def check_appimages(directory, tag, files):
     version = tag[1:]
     names = {path.name for path in files}
     for target, arch in APPIMAGE_ARCHITECTURES.items():
-        appimage = directory / f"spotifast-{version}-{arch}.AppImage"
+        appimage = directory / f"spotifast-mix-{version}-{arch}.AppImage"
         zsync = directory / f"{appimage.name}.zsync"
         present = appimage.name in names
         if present != (zsync.name in names):
             raise ValueError(f"Expected {appimage.name} and {zsync.name} together")
         if not present:
-            if "-" not in version and f"spotifast-{tag}-{target}.tar.gz" in names:
+            if "-" not in version and f"spotifast-mix-{tag}-{target}.tar.gz" in names:
                 raise ValueError(f"Expected {appimage.name} beside the {target} archive")
             continue
         information = embedded_update_information(appimage)
@@ -101,10 +101,10 @@ def prepare(directory, tag):
         raise ValueError("Expected a release tag")
     # The AppImages keep the name native-packages gives them, without the v
     # and with the processor alone, as earlier releases published them.
-    appimage = re.compile(re.escape(f"spotifast-{tag[1:]}-") + r"(x86_64|aarch64)\.AppImage(\.zsync)?")
+    appimage = re.compile(re.escape(f"spotifast-mix-{tag[1:]}-") + r"(x86_64|aarch64)\.AppImage(\.zsync)?")
     files = []
     for path in directory.iterdir():
-        if path.name.startswith("spotifast-" + tag + "-") or appimage.fullmatch(path.name):
+        if path.name.startswith("spotifast-mix-" + tag + "-") or appimage.fullmatch(path.name):
             if not path.is_file() or path.is_symlink():
                 raise ValueError(f"Expected a regular release file: {path.name}")
             files.append(path)

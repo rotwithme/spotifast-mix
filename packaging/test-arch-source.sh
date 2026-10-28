@@ -13,7 +13,7 @@ sed -e "s/@VERSION@/$version/g" -e 's/@PKGREL@/1/g' \
   -e 's/@SOURCE_SHA256@/unused/g' "$recipe" > "$work/PKGBUILD"
 
 srcdir="$work/src"
-expected="$srcdir/spotifast-$version"
+expected="$srcdir/spotifast-mix-$version"
 test -f "$expected/Cargo.toml"
 test -f "$expected/Cargo.lock"
 

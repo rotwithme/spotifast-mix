@@ -11,8 +11,13 @@ on:
 permissions:
   contents: read
 
+# Publication is disabled for this unpublished custom fork.
+# No distribution destination or fork signing authority is configured.
+# These inherited recipes require identity review before re-enabling.
+# Build/test validation remains active in ci.yml, including portable ZIP checks.
 jobs:
   flatpak:
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:

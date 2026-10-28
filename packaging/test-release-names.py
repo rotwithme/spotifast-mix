@@ -6,6 +6,7 @@ import tempfile
 import sys
 import tomllib
 import unittest
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 
@@ -25,13 +26,13 @@ class ReleaseNamesTest(unittest.TestCase):
     def test_checksums_cover_every_download_and_are_repeatable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "spotifast-v0.12.0-linux.tar.gz").write_bytes(b"Linux build")
-            (root / "spotifast-v0.12.0-macos.dmg").write_bytes(b"Mac build")
-            (root / "spotifast-v0.11.2-linux.tar.gz").write_bytes(b"another release")
+            (root / "spotifast-mix-v0.12.0-linux.tar.gz").write_bytes(b"Linux build")
+            (root / "spotifast-mix-v0.12.0-macos.dmg").write_bytes(b"Mac build")
+            (root / "spotifast-mix-v0.11.2-linux.tar.gz").write_bytes(b"another release")
             release_names.prepare(root, "v0.12.0")
             before = (root / "checksums.txt").read_bytes()
             names = [line.split()[1] for line in before.decode().splitlines()]
-            self.assertEqual(names, ["spotifast-v0.12.0-linux.tar.gz", "spotifast-v0.12.0-macos.dmg"])
+            self.assertEqual(names, ["spotifast-mix-v0.12.0-linux.tar.gz", "spotifast-mix-v0.12.0-macos.dmg"])
             release_names.prepare(root, "v0.12.0")
             self.assertEqual((root / "checksums.txt").read_bytes(), before)
 
@@ -39,9 +40,21 @@ class ReleaseNamesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "build").write_bytes(b"build")
-            (root / "spotifast-v0.12.0-linux.tar.gz").symlink_to(root / "build")
-            with self.assertRaisesRegex(ValueError, "regular release file"):
-                release_names.prepare(root, "v0.12.0")
+            link = root / "spotifast-mix-v0.12.0-linux.tar.gz"
+            try:
+                link.symlink_to(root / "build")
+            except OSError as error:
+                if getattr(error, "winerror", None) != 1314:
+                    raise
+                # A normal Windows account may lack CreateSymbolicLink. Exercise
+                # the same rejection with that filesystem predicate supplied.
+                link.write_bytes(b"not a release")
+                with patch.object(Path, "is_symlink", lambda path: path == link):
+                    with self.assertRaisesRegex(ValueError, "regular release file"):
+                        release_names.prepare(root, "v0.12.0")
+            else:
+                with self.assertRaisesRegex(ValueError, "regular release file"):
+                    release_names.prepare(root, "v0.12.0")
             self.assertFalse((root / "checksums.txt").exists())
 
     def test_missing_inputs_fail(self):
@@ -57,24 +70,24 @@ class ReleaseNamesTest(unittest.TestCase):
             self.assertEqual(
                 names,
                 [
-                    "spotifast-0.14.0-aarch64.AppImage",
-                    "spotifast-0.14.0-aarch64.AppImage.zsync",
-                    "spotifast-0.14.0-x86_64.AppImage",
-                    "spotifast-0.14.0-x86_64.AppImage.zsync",
-                    "spotifast-v0.14.0-aarch64-unknown-linux-gnu.tar.gz",
-                    "spotifast-v0.14.0-x86_64-unknown-linux-gnu.tar.gz",
+                    "spotifast-mix-0.14.0-aarch64.AppImage",
+                    "spotifast-mix-0.14.0-aarch64.AppImage.zsync",
+                    "spotifast-mix-0.14.0-x86_64.AppImage",
+                    "spotifast-mix-0.14.0-x86_64.AppImage.zsync",
+                    "spotifast-mix-v0.14.0-aarch64-unknown-linux-gnu.tar.gz",
+                    "spotifast-mix-v0.14.0-x86_64-unknown-linux-gnu.tar.gz",
                 ],
             )
 
     def test_a_wrong_or_missing_update_information_fails(self):
         for arch, information, message in [
             ("x86_64", release_names.update_information("aarch64"), "carries"),
-            ("x86_64", "gh-releases-zsync|crmne|spotifast|latest|spotifast-*-x86_64.AppImage", "carries"),
+            ("x86_64", "gh-releases-zsync|unconfigured|spotifast-mix|latest|spotifast-mix-*-x86_64.AppImage", "carries"),
             ("aarch64", "", "carries ''"),
         ]:
             with tempfile.TemporaryDirectory() as directory:
                 root = release(Path(directory))
-                appimage(root / f"spotifast-0.14.0-{arch}.AppImage", information)
+                appimage(root / f"spotifast-mix-0.14.0-{arch}.AppImage", information)
                 with self.assertRaisesRegex(ValueError, message):
                     release_names.prepare(root, "v0.14.0")
                 self.assertFalse((root / "checksums.txt").exists())
@@ -82,12 +95,12 @@ class ReleaseNamesTest(unittest.TestCase):
     def test_every_appimage_needs_a_zsync_file_that_describes_it(self):
         with tempfile.TemporaryDirectory() as directory:
             root = release(Path(directory))
-            (root / "spotifast-0.14.0-x86_64.AppImage.zsync").unlink()
+            (root / "spotifast-mix-0.14.0-x86_64.AppImage.zsync").unlink()
             with self.assertRaisesRegex(ValueError, "together"):
                 release_names.prepare(root, "v0.14.0")
         with tempfile.TemporaryDirectory() as directory:
             root = release(Path(directory))
-            with (root / "spotifast-0.14.0-aarch64.AppImage").open("ab") as stream:
+            with (root / "spotifast-mix-0.14.0-aarch64.AppImage").open("ab") as stream:
                 stream.write(b"changed after zsyncmake")
             with self.assertRaisesRegex(ValueError, "does not describe .*: Length, SHA-1"):
                 release_names.prepare(root, "v0.14.0")
@@ -95,14 +108,14 @@ class ReleaseNamesTest(unittest.TestCase):
     def test_a_stable_release_has_an_appimage_for_each_linux_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             root = release(Path(directory))
-            for name in ["spotifast-0.14.0-aarch64.AppImage", "spotifast-0.14.0-aarch64.AppImage.zsync"]:
+            for name in ["spotifast-mix-0.14.0-aarch64.AppImage", "spotifast-mix-0.14.0-aarch64.AppImage.zsync"]:
                 (root / name).unlink()
             with self.assertRaisesRegex(ValueError, "beside the aarch64-unknown-linux-gnu archive"):
                 release_names.prepare(root, "v0.14.0")
         # A prerelease publishes none.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "spotifast-v0.14.0-rc.1-x86_64-unknown-linux-gnu.tar.gz").write_bytes(b"Linux")
+            (root / "spotifast-mix-v0.14.0-rc.1-x86_64-unknown-linux-gnu.tar.gz").write_bytes(b"Linux")
             release_names.prepare(root, "v0.14.0-rc.1")
             self.assertEqual(len((root / "checksums.txt").read_text().splitlines()), 1)
 
@@ -145,12 +158,12 @@ def release(root):
     """The Linux downloads of a stable release: both archives, and both
     AppImages with their update information and .zsync files."""
     for arch in ["x86_64", "aarch64"]:
-        (root / f"spotifast-v0.14.0-{arch}-unknown-linux-gnu.tar.gz").write_bytes(b"Linux " + arch.encode())
-        path = root / f"spotifast-0.14.0-{arch}.AppImage"
+        (root / f"spotifast-mix-v0.14.0-{arch}-unknown-linux-gnu.tar.gz").write_bytes(b"Linux " + arch.encode())
+        path = root / f"spotifast-mix-0.14.0-{arch}.AppImage"
         appimage(path, release_names.update_information(arch))
         zsync(path)
     # Another release's AppImage is not listed.
-    appimage(root / "spotifast-0.13.3-x86_64.AppImage", release_names.update_information("x86_64"))
+    appimage(root / "spotifast-mix-0.13.3-x86_64.AppImage", release_names.update_information("x86_64"))
     return root
 
 

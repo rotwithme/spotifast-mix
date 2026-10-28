@@ -133,6 +133,7 @@ struct Inner {
     http: Http,
     runtime: tokio::runtime::Handle,
     cache_dir: PathBuf,
+    session_only: Mutex<HashSet<String>>,
     /// Local files found to hold no cover, so they are not read again.
     coverless: Mutex<HashSet<String>>,
 }
@@ -152,6 +153,7 @@ impl ArtLoader {
                 http: http.into(),
                 runtime,
                 cache_dir,
+                session_only: Mutex::new(HashSet::new()),
                 coverless: Mutex::new(HashSet::new()),
             }),
         }
@@ -165,6 +167,44 @@ impl ArtLoader {
     /// Bytes for `url`, from memory, disk, or the network.
     pub async fn fetch(&self, url: &str) -> Result<Arc<[u8]>, String> {
         self.inner.fetch(url).await
+    }
+
+    /// SoundCloud artwork is retained for the current session only.
+    pub fn mark_session_only(&self, url: &str) {
+        self.inner
+            .session_only
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(url.to_owned());
+    }
+
+    /// Release account artwork, including egui's decoded images and textures.
+    pub fn forget_session_art(&self, ctx: &egui::Context) {
+        let urls: Vec<_> = self
+            .inner
+            .session_only
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .drain()
+            .collect();
+        for url in urls {
+            let copies = self
+                .inner
+                .textures
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&url)
+                .unwrap_or_default();
+            self.inner
+                .entries
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&url);
+            for uri in copies.into_keys() {
+                ctx.forget_image(&uri);
+            }
+            ctx.forget_image(&url);
+        }
     }
 
     /// Whether `url` names a local file already read and found to hold no
@@ -268,6 +308,15 @@ impl ArtLoader {
     /// remote URL: macOS loads cover art itself, synchronously, inside a
     /// callback that cannot report a failure.
     pub fn cached_file(&self, url: &str) -> Option<PathBuf> {
+        if self
+            .inner
+            .session_only
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(url)
+        {
+            return None;
+        }
         let path = self.inner.cache_path(url);
         std::fs::metadata(&path)
             .is_ok_and(|meta| meta.is_file() && meta.len() > 0)
@@ -459,13 +508,22 @@ impl Inner {
         if let Some(file) = crate::local_tags::art_path(url) {
             return self.read_local(url, file, path).await;
         }
-        let cached = tokio::task::spawn_blocking({
-            let path = path.clone();
-            move || std::fs::read(path).ok()
-        })
-        .await
-        .ok()
-        .flatten();
+        let session_only = self
+            .session_only
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(url);
+        let cached = if session_only {
+            None
+        } else {
+            tokio::task::spawn_blocking({
+                let path = path.clone();
+                move || std::fs::read(path).ok()
+            })
+            .await
+            .ok()
+            .flatten()
+        };
         let bytes: Arc<[u8]> = match cached {
             Some(bytes) if !bytes.is_empty() => Arc::from(bytes),
             _ => {
@@ -498,12 +556,14 @@ impl Inner {
                 let bytes: Arc<[u8]> = Arc::from(bytes.as_ref());
                 let write_path = path.clone();
                 let payload = Arc::clone(&bytes);
-                self.runtime.spawn_blocking(move || {
-                    let temporary = write_path.with_extension("part");
-                    if std::fs::write(&temporary, &payload).is_ok() {
-                        let _ = std::fs::rename(&temporary, &write_path);
-                    }
-                });
+                if !session_only {
+                    self.runtime.spawn_blocking(move || {
+                        let temporary = write_path.with_extension("part");
+                        if std::fs::write(&temporary, &payload).is_ok() {
+                            let _ = std::fs::rename(&temporary, &write_path);
+                        }
+                    });
+                }
                 bytes
             }
         };
@@ -1276,6 +1336,27 @@ impl ImageLoader for CoverScaler {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn session_only_artwork_bypasses_persistent_cache() {
+        let dir =
+            std::env::temp_dir().join(format!("spotifast-mix-memory-art-{}", std::process::id()));
+        let runtime = artwork_test_runtime();
+        let loader = artwork_test_loader(&runtime, dir.clone());
+        runtime.block_on(async {
+            let (url, server) = serve_artwork("200 OK", b"fresh session bytes".to_vec()).await;
+            let path = loader.inner.cache_path(&url);
+            std::fs::write(&path, b"old persistent bytes").unwrap();
+            loader.mark_session_only(&url);
+            assert_eq!(&*loader.fetch(&url).await.unwrap(), b"fresh session bytes");
+            server.await.unwrap();
+            assert!(loader.cached_file(&url).is_none());
+            assert_eq!(std::fs::read(&path).unwrap(), b"old persistent bytes");
+        });
+        drop(loader);
+        runtime.shutdown_timeout(Duration::from_secs(1));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     async fn serve_artwork(status: &str, bytes: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
         serve_artwork_sized(status, bytes, true).await

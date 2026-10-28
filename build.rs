@@ -50,9 +50,9 @@ fn main() {
         let mut resource = winresource::WindowsResource::new();
         resource
             .set_icon("packaging/windows/spotifast.ico")
-            .set("ProductName", "Spotifast")
+            .set("ProductName", "Spotifast Mix")
             // Task Manager and the Windows mixer name the process by its description.
-            .set("FileDescription", "Spotifast");
+            .set("FileDescription", "Spotifast Mix");
         if let Err(error) = resource.compile() {
             println!("cargo:warning=Windows resources not embedded: {error}");
         }

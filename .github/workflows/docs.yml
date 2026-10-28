@@ -1,13 +1,6 @@
 name: Docs
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - docs/**
-      - .github/workflows/docs.yml
-      - .github/scripts/indexnow.rb
   workflow_dispatch:
 
 permissions:
@@ -19,8 +12,13 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# Publication is disabled for this unpublished custom fork.
+# No distribution destination or fork signing authority is configured.
+# These inherited recipes require identity review before re-enabling.
+# Build/test validation remains active in ci.yml, including portable ZIP checks.
 jobs:
   build:
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -63,6 +61,7 @@ jobs:
           path: ./docs/_site
 
   deploy:
+    if: ${{ false }}
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -73,6 +72,7 @@ jobs:
         uses: actions/deploy-pages@v5
 
   indexnow:
+    if: ${{ false }}
     needs: deploy
     runs-on: ubuntu-latest
     permissions:

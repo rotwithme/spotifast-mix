@@ -2,7 +2,7 @@
 //!
 //! Configuration, durable non-secret state, and disposable caches live in the
 //! platform's conventional directories, or, for a copy started from the
-//! portable Windows zip, in `spotifast-data` next to the executable (#703).
+//! portable Windows zip, in `spotifast-mix-data` next to the executable (#703).
 //! Spotify grants use the platform store; the token paths below are retained
 //! only for migration and sign-out cleanup.
 
@@ -13,8 +13,8 @@ use std::path::PathBuf;
 /// the single-instance files a running installed copy holds locked and the
 /// logs of its runs.
 const FOLDERS: fastframe_dirs::App = fastframe_dirs::App {
-    not_copied: &["instance", "spotifast.log", "panic.log"],
-    ..fastframe_dirs::App::new("spotifast", "me", "paolino", "spotifast")
+    not_copied: &["instance", "spotifast-mix.log", "panic.log"],
+    ..fastframe_dirs::App::new("spotifast-mix", "app", "spotifastmix", "spotifast-mix")
 };
 
 #[derive(Clone, Debug)]
@@ -98,9 +98,9 @@ impl AppDirs {
     fn fallback() -> Self {
         let fallback = std::env::current_dir().unwrap_or_default();
         Self {
-            config: fallback.join("spotifast-config"),
-            state: fallback.join("spotifast-state"),
-            cache: fallback.join("spotifast-cache"),
+            config: fallback.join("spotifast-mix-config"),
+            state: fallback.join("spotifast-mix-state"),
+            cache: fallback.join("spotifast-mix-cache"),
         }
     }
 
@@ -143,7 +143,7 @@ impl AppDirs {
 
     /// The log of the current run, replaced at every start.
     pub fn log_file(&self) -> PathBuf {
-        self.state.join("spotifast.log")
+        self.state.join("spotifast-mix.log")
     }
 
     /// Where a panic is recorded before the process dies of it.
@@ -282,7 +282,7 @@ mod tests {
     fn the_log_says_which_folders_a_portable_copy_uses_and_why() {
         let installed = AppDirs::from(fastframe_dirs::Dirs::inside(Path::new("/user")));
         assert!(describe(&installed, &fastframe_dirs::Mode::Installed).is_none());
-        let folder = PathBuf::from("/usb/Spotifast/spotifast-data");
+        let folder = PathBuf::from("/usb/SpotifastMix/spotifast-mix-data");
         let portable = AppDirs::from(fastframe_dirs::Dirs::inside(&folder));
         let (level, line) = describe(
             &portable,
@@ -294,7 +294,7 @@ mod tests {
         .unwrap();
         assert_eq!(level, log::Level::Info);
         assert!(
-            line.contains("spotifast-data") && line.contains("/user"),
+            line.contains("spotifast-mix-data") && line.contains("/user"),
             "{line}"
         );
         let (level, line) = describe(
@@ -312,11 +312,11 @@ mod tests {
         );
     }
 
-    /// Installed copies, and every copy on Linux and macOS, keep the folders
-    /// they always had.
+    /// All platforms use a distinct identity, so an upstream installation is untouched.
     #[test]
-    fn the_per_user_folders_are_the_ones_spotifast_always_used() {
-        let Some(project) = directories::ProjectDirs::from("me", "paolino", "spotifast") else {
+    fn fork_uses_its_own_per_user_folders() {
+        let Some(project) = directories::ProjectDirs::from("app", "spotifastmix", "spotifast-mix")
+        else {
             return;
         };
         let dirs = AppDirs::installed();

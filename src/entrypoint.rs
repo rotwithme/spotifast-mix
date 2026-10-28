@@ -3,7 +3,7 @@ use spotifast::{app, backend, paths, settings, single_instance, util};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use fastframe_shell::window::Geometry;
 
-/// A fast, native Spotify client.
+/// A native Spotify and SoundCloud desktop client.
 #[derive(Debug, Parser)]
 #[command(name = env!("CARGO_BIN_NAME"), version, about)]
 struct Cli {
@@ -44,7 +44,7 @@ struct Cli {
     #[arg(long, requires = "demo")]
     demo_data: Option<std::path::PathBuf>,
 
-    /// Page to open in demo mode, e.g. `home`, `playlist:pl1`, `artist:art0`.
+    /// Page to open in demo mode, e.g. `home`, `mix`, `playlist:pl1`, `artist:art0`.
     #[cfg(feature = "demo")]
     #[arg(long)]
     demo_page: Option<String>,
@@ -57,7 +57,8 @@ struct Cli {
     /// `library-list-narrow`, `library-list-wide`, `library-grid`, `library-grid-narrow`,
     /// `library-grid-wide`, `waiting-for-browser`, `sign-in-returning`, `sign-in-malformed`,
     /// `sign-in-shared-retired`, `sign-in-unknown-client`, `sign-in-not-allowed`,
-    /// `shared-grant`, or `own-app`.
+    /// `shared-grant`, `own-app`, `mix-library`, `mix-queue`, `mix-playlist`,
+    /// `soundcloud-search`, `soundcloud-playlist`, `soundcloud-only`, `mix-error`, `mix-loading`, or `mix-accounts`.
     #[cfg(feature = "demo")]
     #[arg(long)]
     demo_show: Option<String>,
@@ -271,7 +272,7 @@ fn run_control(control: Control) -> i32 {
             }
         }
         Err(error) => {
-            eprintln!("Spotifast is not running or does not support remote control: {error}");
+            eprintln!("Spotifast Mix is not running or does not support remote control: {error}");
             return 1;
         }
     };
@@ -297,7 +298,7 @@ fn write_reply(out: &mut impl std::io::Write, text: &str) -> i32 {
 /// sandbox's app id, which Flatpak always sets in `FLATPAK_ID`.
 #[cfg(target_os = "linux")]
 fn desktop_entry() -> String {
-    fastframe_now_playing::desktop_entry("spotifast")
+    fastframe_now_playing::desktop_entry("spotifast-mix")
 }
 
 /// The `nowplaying` snapshot as one human-readable line.
@@ -350,10 +351,10 @@ fn format_devices(snapshot: &str) -> String {
 }
 
 pub(crate) fn run() -> eframe::Result<()> {
-    // First of all: `--apply-update <job>` makes this process the update
-    // helper, which installs and exits; otherwise the receipt and error an
-    // update relaunch carries are taken out of the arguments.
-    let launch = fastframe_update::intercept(&spotifast::updates::CONFIG);
+    // This fork has no update publisher. Never run the upstream updater helper,
+    // even when an old launcher supplies --apply-update or a receipt. Clap
+    // rejects those arguments rather than allowing replacement of this build.
+    let arguments: Vec<_> = std::env::args_os().collect();
     // Before any output is listed or opened.
     spotifast::sink::name_in_mixers();
     // A MilkDrop child launch is a bare visualiser window, not the app: it has
@@ -365,7 +366,7 @@ pub(crate) fn run() -> eframe::Result<()> {
         std::process::exit(spotifast::milkdrop::child::run(args));
     }
 
-    let cli = Cli::from_arg_matches(&Cli::command().get_matches_from(&launch.arguments))
+    let cli = Cli::from_arg_matches(&Cli::command().get_matches_from(&arguments))
         .unwrap_or_else(|error| error.exit());
     // Demo mode invents plays, settings, and a signed-in account. Without a
     // folder of its own it would write them into the real profile, where
@@ -374,7 +375,7 @@ pub(crate) fn run() -> eframe::Result<()> {
     let cli = if (cli.demo || cli.demo_shot.is_some()) && cli.demo_data.is_none() {
         Cli {
             demo_data: Some(
-                std::env::temp_dir().join(format!("spotifast-demo-{}", std::process::id())),
+                std::env::temp_dir().join(format!("spotifast-mix-demo-{}", std::process::id())),
             ),
             ..cli
         }
@@ -394,7 +395,7 @@ pub(crate) fn run() -> eframe::Result<()> {
         .map(|text| match spotifast::link::parse(text) {
             Some(uri) => uri,
             None => {
-                eprintln!("not a Spotify link: {text}");
+                eprintln!("not a supported Spotify or SoundCloud link");
                 std::process::exit(2);
             }
         });
@@ -417,11 +418,11 @@ pub(crate) fn run() -> eframe::Result<()> {
         match single_instance::acquire(&waker, link.as_deref(), hidden) {
             single_instance::Outcome::Only(guard) => Some(guard),
             single_instance::Outcome::Surfaced if hidden => {
-                log::info!("Spotifast is already running");
+                log::info!("Spotifast Mix is already running");
                 return Ok(());
             }
             single_instance::Outcome::Surfaced => {
-                log::info!("Spotifast is already running; asked it to show its window");
+                log::info!("Spotifast Mix is already running; asked it to show its window");
                 return Ok(());
             }
         }
@@ -454,7 +455,7 @@ pub(crate) fn run() -> eframe::Result<()> {
     // Launched from a desktop, stderr goes nowhere; keep the run's log where
     // a bug report can find it, and a line per panic in the panic log (with
     // any link in its message removed: a URL can carry a token).
-    if let Err(error) = fastframe_log::Logging::new("spotifast", env!("CARGO_PKG_VERSION"))
+    if let Err(error) = fastframe_log::Logging::new("spotifast-mix", env!("CARGO_PKG_VERSION"))
         .filter(default_filter)
         .file(dirs.log_file())
         .panic_log(dirs.panic_log())
@@ -534,11 +535,7 @@ pub(crate) fn run() -> eframe::Result<()> {
     if load_themes {
         app.load_custom_themes(&waker);
     }
-    let receipt_shown = launch.receipt.is_some();
-    app.update_receipt = launch.receipt;
-    if let Some(error) = launch.error {
-        app.report_update_failure(error);
-    }
+    let receipt_shown = false;
     if let Some(guard) = &instance {
         app.set_remote_control(guard);
     }
@@ -725,7 +722,7 @@ pub(crate) fn run() -> eframe::Result<()> {
                 screen_asked: None,
             }))
         }));
-        fastframe_graphics::Graphics::new("Spotifast")
+        fastframe_graphics::Graphics::new("Spotifast Mix")
             .help(spotifast::window::DOWNLOAD_PAGE)
             .dialog(move |trouble| spotifast::window::no_window_dialog(locale, trouble))
             .run_native(
@@ -845,12 +842,12 @@ fn native_options(
     #[cfg(target_os = "linux")]
     let persistence_path = persistence_path.or_else(|| {
         // Keep the native profile path even when Flatpak supplies its app ID.
-        eframe::storage_dir("spotifast").map(|dir| dir.join("app.ron"))
+        eframe::storage_dir("spotifast-mix").map(|dir| dir.join("app.ron"))
     });
     #[cfg(target_os = "linux")]
     let app_id = desktop_entry();
     #[cfg(not(target_os = "linux"))]
-    let app_id = "spotifast";
+    let app_id = "spotifast-mix";
     let icon = if cfg!(target_os = "macos") {
         // macOS takes the dock icon from the bundle's .icns, which is the
         // 1024px drawing with the platform's rounding. Setting a window
@@ -860,7 +857,7 @@ fn native_options(
         app_icon()
     };
     let viewport = egui::ViewportBuilder::default()
-        .with_title("Spotifast")
+        .with_title("Spotifast Mix")
         .with_app_id(app_id)
         .with_taskbar(true)
         .with_icon(icon);
@@ -927,7 +924,8 @@ fn native_options(
 
 fn profile_options(mut options: eframe::NativeOptions) -> eframe::NativeOptions {
     if options.persist_window {
-        options.persistence_path = eframe::storage_dir("spotifast").map(|dir| dir.join("app.ron"));
+        options.persistence_path =
+            eframe::storage_dir("spotifast-mix").map(|dir| dir.join("app.ron"));
     }
     options
 }
@@ -971,7 +969,7 @@ mod native_window_tests {
         let main = profile_options(native_options(false, None, None, Geometry::default()));
         assert_eq!(
             main.persistence_path,
-            eframe::storage_dir("spotifast").map(|dir| dir.join("app.ron"))
+            eframe::storage_dir("spotifast-mix").map(|dir| dir.join("app.ron"))
         );
         let demo_path = std::path::PathBuf::from("temporary/demo.ron");
         let demo = profile_options(demo_native_options(
@@ -1004,12 +1002,12 @@ mod native_window_tests {
             assert_eq!(mini.viewport.app_id, main.viewport.app_id);
             assert_eq!(
                 main.persistence_path,
-                eframe::storage_dir("spotifast").map(|dir| dir.join("app.ron"))
+                eframe::storage_dir("spotifast-mix").map(|dir| dir.join("app.ron"))
             );
         }
         #[cfg(not(target_os = "linux"))]
         {
-            assert_eq!(main.viewport.app_id.as_deref(), Some("spotifast"));
+            assert_eq!(main.viewport.app_id.as_deref(), Some("spotifast-mix"));
             assert_eq!(mini.viewport.app_id, main.viewport.app_id);
             assert_eq!(main.persistence_path, None);
         }
@@ -1602,10 +1600,10 @@ mod tests {
     /// launch has something to show.
     #[test]
     fn a_start_at_login_in_the_tray_waits_unless_there_is_something_to_show() {
-        let launch = Cli::try_parse_from(["spotifast", "--start-hidden"]).expect("it parses");
+        let launch = Cli::try_parse_from(["spotifast-mix", "--start-hidden"]).expect("it parses");
         assert!(launch.start_hidden);
         assert!(
-            !Cli::try_parse_from(["spotifast"])
+            !Cli::try_parse_from(["spotifast-mix"])
                 .expect("it parses")
                 .start_hidden
         );
@@ -1632,7 +1630,7 @@ mod tests {
     #[test]
     fn a_link_and_a_verb_are_told_apart() {
         // #given / #when / #then
-        let launch = Cli::try_parse_from(["spotifast", "spotify:track:4uLU6hMCjMI75M1A2tKUQC"])
+        let launch = Cli::try_parse_from(["spotifast-mix", "spotify:track:4uLU6hMCjMI75M1A2tKUQC"])
             .expect("a link parses");
         assert_eq!(
             launch.link.as_deref(),
@@ -1641,7 +1639,7 @@ mod tests {
         assert!(launch.control.is_none());
 
         let launch = Cli::try_parse_from([
-            "spotifast",
+            "spotifast-mix",
             "https://open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3?si=x",
             "--verbose",
         ])
@@ -1649,11 +1647,11 @@ mod tests {
         assert!(launch.link.is_some());
         assert!(launch.verbose);
 
-        let verb = Cli::try_parse_from(["spotifast", "next"]).expect("a verb parses");
+        let verb = Cli::try_parse_from(["spotifast-mix", "next"]).expect("a verb parses");
         assert!(matches!(verb.control, Some(Control::Next)));
         assert!(verb.link.is_none());
 
-        let bare = Cli::try_parse_from(["spotifast"]).expect("a plain launch parses");
+        let bare = Cli::try_parse_from(["spotifast-mix"]).expect("a plain launch parses");
         assert!(bare.link.is_none() && bare.control.is_none());
     }
 }

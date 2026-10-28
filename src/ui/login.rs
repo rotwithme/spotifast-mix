@@ -207,7 +207,7 @@ fn sign_in_column(app: &mut App, ui: &mut egui::Ui, connecting: bool, beside: Op
     ui.add_space(6.0);
     theme::text(
         ui,
-        "Spotifast",
+        "Spotifast Mix",
         theme::bold(if steps { 26.0 } else { 30.0 }),
         palette.text,
     );
@@ -332,15 +332,40 @@ fn sign_in_column(app: &mut App, ui: &mut egui::Ui, connecting: bool, beside: Op
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
-            if theme::link(
+            let proxy = theme::link(
                 ui,
                 gettext(locale, "Proxy Settings"),
                 theme::regular(13.0),
                 palette.secondary,
-            )
-            .clicked()
-            {
+            );
+            if proxy.clicked() {
                 proxy_open = !proxy_open;
+            }
+            // Keep the original row's geometry: the service link uses the
+            // spare space beside it and adds no height to the sign-in card.
+            if !connecting && !matches!(app.auth, AuthStatus::WaitingForBrowser { .. }) {
+                let bounds = Rect::from_min_max(
+                    pos2(proxy.rect.right() + 8.0, proxy.rect.top()),
+                    pos2(ui.max_rect().right(), proxy.rect.bottom()),
+                );
+                let mut service = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(bounds)
+                        .layout(Layout::left_to_right(Align::Center)),
+                );
+                if theme::link(
+                    &mut service,
+                    "SoundCloud",
+                    theme::regular(13.0),
+                    palette.secondary,
+                )
+                .clicked()
+                {
+                    app.actions
+                        .push(Action::Integration(crate::integration::Action::Open(
+                            crate::integration::View::Accounts,
+                        )));
+                }
             }
         });
     });

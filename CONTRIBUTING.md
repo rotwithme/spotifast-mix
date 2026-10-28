@@ -1,7 +1,18 @@
-# Contributing to Spotifast
+# Contributing to Spotifast Mix
 
-Spotifast is a native Spotify client. Changes should improve the
-desktop app without adding a browser, fallback services, or another backend.
+This custom version retains Spotifast's contribution rules below, with one
+explicit product-scope change authorized for this fork: native SoundCloud accounts,
+search, playback, playlist editing, and local mixed playlists are supported.
+Spotify audio must still come exclusively from Spotify/librespot. SoundCloud audio
+must come from its official API, with appropriate permission for the intended use
+before release. Keep the app native, with no embedded browser, telemetry, hosted
+backend, scraping, or replacement audio sources.
+
+The fork's account fields and Local mix controls are part of that approved scope.
+Other new settings and unrelated redesigns still require explicit approval.
+[Spotifast Mix](docs/_reference/spotifast-mix.md) describes the integration contract.
+The initial distribution is an isolated Windows portable ZIP; public publishing,
+upstream updates, and inherited Windows installer takeover are disabled.
 
 ## Before opening an issue
 

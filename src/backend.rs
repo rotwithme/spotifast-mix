@@ -697,10 +697,11 @@ pub enum AutostartRequest {
 /// Spotifast's registration to start at login. The hidden start passes
 /// `--start-hidden`, which the command line takes.
 pub fn autostart() -> fastframe_autostart::Autostart {
-    fastframe_autostart::Autostart::new("spotifast", "Spotifast")
+    fastframe_autostart::Autostart::new("spotifast-mix", "Spotifast Mix")
 }
 
 pub enum Command {
+    Integration(Box<crate::integration::Request>),
     OpenThemesFolder,
     /// Read or change the login registration, off the UI thread: it reads
     /// and writes a file, the registry or D-Bus, and the Flatpak portal may
@@ -965,6 +966,7 @@ pub struct LyricsRequest {
 }
 
 pub enum Event {
+    Integration(Box<crate::integration::Event>),
     /// The folder picked in the local files dialog; `None` when cancelled.
     LocalFilesFolderChosen(Option<std::path::PathBuf>),
     /// The songs in `folder`, by the `spotify:local:` URIs they play for.
@@ -1812,6 +1814,7 @@ impl PlaylistHeaderLookup {
 }
 
 struct Worker {
+    integration: crate::integration::Worker,
     dirs: AppDirs,
     credentials: CredentialStore,
     web_tokens: [Option<Arc<WebTokens>>; 2],
@@ -1924,6 +1927,8 @@ fn receiver_snapshot(
 
 impl Worker {
     /// Initialize account-scoped dispatch state, Home reader and session background budget.
+    /// Construct while entered into the runtime that will drive `run`, as
+    /// `Backend::spawn` does: the independent integration actors live there too.
     #[allow(clippy::too_many_arguments)]
     fn new(
         dirs: AppDirs,
@@ -1936,11 +1941,27 @@ impl Worker {
         commands: mpsc::UnboundedSender<Command>,
         waker: Waker,
     ) -> Self {
+        #[cfg(not(test))]
+        let credentials = CredentialStore::new(dirs.clone());
+        #[cfg(test)]
+        let credentials = CredentialStore::in_memory(dirs.clone());
+        let integration_events = events.clone();
+        let integration_waker = waker.clone();
+        let api = Arc::new(ApiGateway::new(http.clone(), activity));
+        let integration = crate::integration::Worker::new(
+            engine_config.clone(),
+            http.clone(),
+            credentials.clone(),
+            Arc::clone(&api),
+            dirs.state.clone(),
+            Arc::new(move |event| {
+                let _ = integration_events.send(Event::Integration(Box::new(event)));
+                integration_waker.wake();
+            }),
+        );
         Self {
-            #[cfg(not(test))]
-            credentials: CredentialStore::new(dirs.clone()),
-            #[cfg(test)]
-            credentials: CredentialStore::in_memory(dirs.clone()),
+            integration,
+            credentials,
             web_tokens: [None, None],
             playback_grant: None,
             pending_playback_grant: None,
@@ -1955,7 +1976,7 @@ impl Worker {
             engine_config,
             engine_proxy: None,
             web_client_id,
-            api: Arc::new(ApiGateway::new(http.clone(), activity)),
+            api,
             made_for_you: Arc::new(crate::made_for_you::MadeForYou::new(http.clone())),
             new_releases: Arc::new(crate::new_releases::NewReleases::new(http.clone())),
             connect: Arc::default(),
@@ -2006,8 +2027,10 @@ impl Worker {
     /// change leaves the existing connection in place and is reported to the UI.
     fn apply_proxy(&mut self, proxy: ProxyConfig) -> Result<bool, String> {
         let client = crate::http::build_client(&proxy)?;
+        let mutations = crate::http::build_collection_client(&proxy)?;
         let restart = self.engine_proxy != proxy.librespot_url();
         self.http.replace(client);
+        self.integration.mutations.replace(mutations);
         self.engine_config.proxy = proxy;
         Ok(restart)
     }
@@ -2131,6 +2154,8 @@ impl Worker {
             return;
         }
         self.restore_spotify_grants();
+        self.integration
+            .handle(crate::integration::Request::Restore);
         for command in self.waiting_for_proxy.drain(..) {
             let _ = self.commands.send(command);
         }
@@ -2159,6 +2184,7 @@ impl Worker {
                 continue;
             }
             match command {
+                Command::Integration(request) => self.integration.handle(*request),
                 Command::ListOutputDevices => {
                     let events = self.events.clone();
                     let waker = self.waker.clone();
@@ -2290,7 +2316,10 @@ impl Worker {
                         waker.wake();
                     });
                 }
-                Command::Shutdown => break,
+                Command::Shutdown => {
+                    self.integration.runtime.send(crate::mix::Command::Shutdown);
+                    break;
+                }
                 Command::SignIn {
                     request,
                     config,
@@ -2333,10 +2362,16 @@ impl Worker {
                     // acknowledgement was still in flight when this was clicked.
                     config.proxy = self.engine_config.proxy.clone();
                     self.engine_config = config;
+                    self.integration
+                        .runtime
+                        .configure(self.engine_config.clone());
                     self.replace_engine();
                 }
                 Command::ApplyProxy { request, config } => self.change_proxy(request, config, None),
                 Command::Player(command) => {
+                    if matches!(&command, PlayerCommand::Load(_) | PlayerCommand::Transfer) {
+                        crate::player::claim_output(crate::player::OutputOwner::Connect).await;
+                    }
                     if matches!(&command, PlayerCommand::Load(_)) {
                         self.resume = None;
                     }
@@ -2970,7 +3005,7 @@ impl Worker {
                     }
                 }
             }
-            None | Some(StoredGrant::Proxy(_)) => {}
+            None | Some(StoredGrant::Proxy(_) | StoredGrant::SoundCloud(_)) => {}
         }
         if slot == CredentialSlot::Playback {
             self.start_prerelease();
@@ -3381,6 +3416,7 @@ impl Worker {
 
     /// Cancels in-flight account work and drops cached Home data on sign-out.
     fn sign_out(&mut self) {
+        self.integration.runtime.set_spotify_session(None);
         self.spotify_restore_started = true;
         self.cancel_search();
         self.signed_in = false;
@@ -3928,6 +3964,9 @@ impl Worker {
                     self.schedule_resume_check(1_500);
                 }
                 self.engine = Some(engine);
+                self.integration.runtime.set_spotify_session(
+                    self.engine.as_ref().map(|engine| engine.session().clone()),
+                );
                 self.start_rootlist();
                 self.reconnects.clear();
                 self.emit(Event::Playback(LocalPlayback::Ready { device_id }));
@@ -4095,7 +4134,7 @@ impl Worker {
                 if !lease.current() {
                     return Err("Sign-in changed before receiver activation.".into());
                 }
-                crate::zeroconf::add_user(&http, &receiver, &info, &credentials, "Spotifast")
+                crate::zeroconf::add_user(&http, &receiver, &info, &credentials, "Spotifast Mix")
                     .map_err(|error| error.to_string())
             })();
             let _ = events.send(Event::ReceiverActivated { name, result });
@@ -8423,18 +8462,42 @@ mod authorization_tests {
         let art = ArtLoader::new(http.clone(), runtime.handle().clone(), dirs.art_cache_dir());
         let (sender, events) = std::sync::mpsc::channel();
         let (commands, _) = mpsc::unbounded_channel();
-        let worker = Worker::new(
-            dirs,
-            config,
-            Some("personal".into()),
-            http,
-            art,
-            Arc::new(NetActivity::default()),
-            sender,
-            commands,
-            Waker::default(),
-        );
+        let worker = {
+            // Match Backend::spawn: construction attaches the integration
+            // actors to this runtime, before a test drives its command loop.
+            let _entered = runtime.enter();
+            Worker::new(
+                dirs,
+                config,
+                Some("personal".into()),
+                http,
+                art,
+                Arc::new(NetActivity::default()),
+                sender,
+                commands,
+                Waker::default(),
+            )
+        };
         (runtime, worker, events)
+    }
+
+    #[test]
+    fn constructing_a_worker_attaches_actors_without_leaking_an_empty_provider_state() {
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        let (runtime, worker, events) = worker("scoped-runtime-construction");
+        assert!(
+            tokio::runtime::Handle::try_current().is_err(),
+            "the helper must leave the caller outside its runtime"
+        );
+        assert!(events.try_iter().next().is_none());
+        runtime.block_on(async {
+            tokio::task::yield_now().await;
+        });
+        assert!(
+            events.try_iter().next().is_none(),
+            "starting idle actors must not change Spotify's event stream"
+        );
+        drop(worker);
     }
 
     /// Tests that bind the personal app's callback port take turns.

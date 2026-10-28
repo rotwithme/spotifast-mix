@@ -11,10 +11,10 @@
 //! port that answers only requests carrying the random token the running
 //! instance writes beside the lock.
 //!
-//! Clients send one `spotifast:<verb>` line and receive one reply. Commands
+//! Clients send one `spotifast-mix:<verb>` line and receive one reply. Commands
 //! enter the same action queue as tray and media-key events. Read commands use
 //! snapshots, so the listener thread never accesses app state. The
-//! `spotifast` command-line subcommands are clients of this channel; MPRIS
+//! `spotifast-mix` command-line subcommands are clients of this channel; MPRIS
 //! remains for media keys and desktop players on Linux.
 //!
 //! Clients poll the current snapshot; the app does not push updates.
@@ -26,7 +26,7 @@
 
 /// The name every request and reply starts with, so a copy of another app
 /// never obeys Spotifast's requests.
-const NAME: &str = "spotifast";
+const NAME: &str = "spotifast-mix";
 
 /// The reply to an accepted command.
 const OK_REPLY: &str = "ok";
@@ -144,7 +144,7 @@ pub const NO_DEVICES: &str = "[]";
 /// it gets a slot of its own for that folder, kept in the user's profile
 /// rather than the portable folder, which may sit on a drive any user can
 /// read: it never hands a launch to the installed copy or to a portable
-/// copy elsewhere, and the `spotifast` command it runs reaches it.
+/// copy elsewhere, and the `spotifast-mix` command it runs reaches it.
 fn slot() -> fastframe_instance::Slot {
     #[cfg(not(windows))]
     let slot = fastframe_instance::Slot::new(NAME);
@@ -178,7 +178,7 @@ pub fn send(verb: &str) -> std::io::Result<Reply> {
     reply(&slot().send(verb)?)
 }
 
-/// Reads the running instance's reply, without the `spotifast:` prefix the
+/// Reads the running instance's reply, without the `spotifast-mix:` prefix the
 /// channel already checked.
 fn reply(line: &str) -> std::io::Result<Reply> {
     if line == OK_REPLY {
@@ -297,7 +297,7 @@ enum Request {
 }
 
 /// Reads one request line, the channel having already checked and removed
-/// its `spotifast:` prefix.
+/// its `spotifast-mix:` prefix.
 fn parse(line: &str) -> Option<Request> {
     let verb = line.trim_end();
     let (verb, argument) = match verb.split_once(' ') {
@@ -523,8 +523,10 @@ mod tests {
     /// A slot of its own in a throwaway directory, so a Spotifast already
     /// running on this machine is left alone.
     fn test_slot(name: &str) -> (fastframe_instance::Slot, std::path::PathBuf) {
-        let dir =
-            std::env::temp_dir().join(format!("spotifast-instance-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "spotifast-mix-instance-{name}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         (fastframe_instance::Slot::at(&dir, NAME), dir)
     }

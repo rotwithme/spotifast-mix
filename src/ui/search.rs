@@ -13,6 +13,24 @@ use crate::theme::{self, Icon};
 use super::widgets::{self, TrackRow};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
+    super::mix::source_filters(app, ui);
+    if app.integration.source != crate::integration::Source::SoundCloud {
+        if app.integration.source == crate::integration::Source::All {
+            ui.heading("Spotify");
+        }
+        if app.is_connected() {
+            spotify_show(app, ui);
+        } else {
+            ui.label("Connect Spotify from Accounts to search Spotify.");
+        }
+    }
+    if app.integration.source != crate::integration::Source::Spotify {
+        ui.add_space(16.0);
+        super::mix::search(app, ui);
+    }
+}
+
+fn spotify_show(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     if app.search.committed.is_empty() && app.search.typed_at.is_none() {
         recent(app, ui);

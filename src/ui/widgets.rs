@@ -967,6 +967,14 @@ fn item_menu_at(
     ui.set_max_width(300.0);
     let uri = item.uri().to_string();
     let label = item.name().to_string();
+    ui.add_enabled_ui(
+        item.uri().starts_with("spotify:track:") || item.uri().starts_with("spotify:episode:"),
+        |ui| {
+            ui.menu_button("Local mix", |ui| {
+                super::mix::media_menu(app, ui, &crate::mix::MediaItem::from(item.clone()));
+            });
+        },
+    );
     // A local file queues only on this computer's player (#1002).
     let queueable = app.can_queue(&uri);
     if menu_item_enabled(

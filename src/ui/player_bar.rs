@@ -526,6 +526,11 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
     let title_response = theme::link(&mut text_ui, &now.title, theme::medium(14.0), palette.text)
         .interact(drag_sense);
     if title_response.clicked() {
+        if now.uri.starts_with("soundcloud:")
+            && let Some(entry) = &app.integration.snapshot.current
+        {
+            app.actions.push(Action::OpenUrl(entry.item.permalink()));
+        }
         if let Some(id) = &now.album_id {
             app.actions.push(Action::Open(Page::Album(id.clone())));
         } else if let Some(id) = &now.show_id {
@@ -534,6 +539,11 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
     }
     let mut responses = vec![cover_response, title_response];
     text_ui.horizontal_top(|ui| {
+        if now.uri.starts_with("soundcloud:")
+            && let Some(entry) = app.integration.snapshot.current.clone()
+        {
+            super::mix::soundcloud_badge(app, ui, &entry.item.permalink());
+        }
         if now.artists.is_empty() {
             let response = theme::link(ui, &now.subtitle, theme::regular(12.0), palette.secondary)
                 .interact(drag_sense);
@@ -592,7 +602,7 @@ fn now_playing_block(app: &mut App, ui: &mut egui::Ui, region: Rect, now: Option
         }
     }
 
-    if !now.is_episode {
+    if !now.is_episode && !now.uri.starts_with("soundcloud:") {
         let saved = app.is_saved(&now.uri).unwrap_or(false);
         // A liked heart stays green under the pointer, like shuffle.
         let (icon, color, hover, tooltip) = if saved {

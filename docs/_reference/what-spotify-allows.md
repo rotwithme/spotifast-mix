@@ -4,6 +4,10 @@ description: What Spotify's Web API and librespot provide, and what neither supp
 nav_order: 3
 ---
 
+Spotifast Mix retains these Spotify limitations. Its separate SoundCloud
+integration and locally saved mixed playlists do not extend Spotify's APIs or
+provide another source for Spotify audio. See [Spotifast Mix](spotifast-mix.md).
+
 Spotifast uses Spotify's
 [Web API](https://developer.spotify.com/documentation/web-api) for account and
 catalogue data. It uses [librespot](https://github.com/librespot-org/librespot)

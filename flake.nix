@@ -1,5 +1,5 @@
 {
-  description = "Spotify, native and fast";
+  description = "Spotifast Mix: native Spotify and SoundCloud";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -88,7 +88,7 @@
       packages = forAllSystems (
         pkgs:
         let
-          spotifast =
+          spotifastMix =
             let
               toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
               rustPlatform = pkgs.makeRustPlatform {
@@ -110,7 +110,7 @@
               );
             in
             rustPlatform.buildRustPackage rec {
-              pname = "spotifast";
+              pname = "spotifast-mix";
               version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
               src = self;
 
@@ -171,30 +171,30 @@
               # The GUI dlopens its Wayland, X11 and GL libraries at run time.
               postFixup =
                 pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-                  wrapProgram $out/bin/spotifast \
+                  wrapProgram $out/bin/spotifast-mix \
                     --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}
                 ''
                 + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
-                  rcodesign sign "$out/Applications/Spotifast.app"
+                  rcodesign sign "$out/Applications/Spotifast Mix.app"
                 '';
 
               postInstall =
                 pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
                   install -Dm644 packaging/applications/spotifast.desktop \
-                    $out/share/applications/spotifast.desktop
+                    $out/share/applications/spotifast-mix.desktop
                   install -Dm644 packaging/icons/spotifast.svg \
-                    $out/share/icons/hicolor/scalable/apps/spotifast.svg
+                    $out/share/icons/hicolor/scalable/apps/spotifast-mix.svg
                   install -Dm644 contrib/omarchy/spotifast.json.tpl \
-                    $out/share/spotifast/omarchy/spotifast.json.tpl
+                    $out/share/spotifast-mix/omarchy/spotifast-mix.json.tpl
                   install -Dm755 contrib/omarchy/spotifast-theme \
-                    $out/share/spotifast/omarchy/spotifast-theme
+                    $out/share/spotifast-mix/omarchy/spotifast-mix-theme
                 ''
                 + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
-                  app="$out/Applications/Spotifast.app/Contents"
+                  app="$out/Applications/Spotifast Mix.app/Contents"
                   mkdir -p "$app/MacOS" "$app/Resources"
-                  executable=Spotifast
-                  identifier=rocks.spotifast.Spotifast
-                  cp "$out/bin/spotifast" "$app/MacOS/$executable"
+                  executable='Spotifast Mix'
+                  identifier=app.spotifastmix.SpotifastMix
+                  cp "$out/bin/spotifast-mix" "$app/MacOS/$executable"
                   icnsify packaging/macos/icon-1024.png -o "$app/Resources/spotifast.icns"
                   substitute packaging/macos/Info.plist "$app/Info.plist" \
                     --replace-fail __VERSION__ "${version}" \
@@ -204,20 +204,20 @@
                 '';
 
               meta = {
-                description = "Fast native Spotify client with local playback and Spotify Connect";
-                homepage = "https://spotifast.rocks";
+                description = "Native Spotify and SoundCloud client with local mixed playlists";
+                homepage = "https://github.com/unconfigured/spotifast-mix";
                 license = pkgs.lib.licenses.mit;
-                mainProgram = "spotifast";
+                mainProgram = "spotifast-mix";
               };
             };
 
         in
         {
-          default = spotifast;
-          inherit spotifast;
+          default = spotifastMix;
+          spotifast-mix = spotifastMix;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-          spotifast-app = spotifast;
+          spotifast-mix-app = spotifastMix;
         }
       );
 

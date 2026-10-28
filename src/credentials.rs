@@ -1,4 +1,4 @@
-//! Durable Spotify grants and proxy passwords in the platform credential store.
+//! Durable service grants and proxy passwords in the platform credential store.
 //!
 //! All native calls run on one dedicated thread. A locked store cannot hold
 //! the UI, command loop, or runtime shutdown hostage. Generation checks reject
@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{auth::StoredToken, paths::AppDirs};
 
-const SERVICE: &str = "rocks.spotifast.Spotifast";
+const SERVICE: &str = "app.spotifastmix.SpotifastMix";
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,11 +29,18 @@ pub enum Slot {
     Personal,
     Playback,
     Proxy,
+    SoundCloud,
 }
 
 impl Slot {
     pub const SPOTIFY: [Self; 3] = [Self::Shared, Self::Personal, Self::Playback];
-    pub const ALL: [Self; 4] = [Self::Shared, Self::Personal, Self::Playback, Self::Proxy];
+    pub const ALL: [Self; 5] = [
+        Self::Shared,
+        Self::Personal,
+        Self::Playback,
+        Self::Proxy,
+        Self::SoundCloud,
+    ];
     pub(crate) fn index(self) -> usize {
         self as usize
     }
@@ -43,6 +50,7 @@ impl Slot {
             Self::Personal => "personal-web",
             Self::Playback => "playback",
             Self::Proxy => "proxy-password",
+            Self::SoundCloud => "soundcloud",
         }
     }
 }
@@ -53,6 +61,7 @@ pub enum Grant {
     Web(StoredToken),
     Playback(Credentials),
     Proxy(ProxyPassword),
+    SoundCloud(crate::soundcloud::StoredGrant),
 }
 
 /// No Debug implementation: the password is usable, and the username is private.
@@ -95,6 +104,7 @@ impl Grant {
                     && !credentials.auth_data.is_empty()
             }
             (Slot::Proxy, Self::Proxy(password)) => password.valid(),
+            (Slot::SoundCloud, Self::SoundCloud(grant)) => grant.valid(),
             _ => false,
         }
     }
@@ -119,7 +129,7 @@ pub enum Error {
     Locked,
     #[error("The system credential store did not respond. This sign-in cannot be remembered yet.")]
     Timeout,
-    #[error("The stored Spotify grant is invalid. Sign in again.")]
+    #[error("The stored grant is invalid. Connect the account again.")]
     Invalid,
     #[error(
         "Unable to update credential-storage state. Check the application state directory's permissions."
@@ -574,7 +584,7 @@ type Job = Box<dyn FnOnce(&mut dyn ProtectedStore) + Send>;
 struct Inner {
     dirs: AppDirs,
     profile: String,
-    generations: [AtomicU64; 4],
+    generations: [AtomicU64; 5],
     // Held only around the tiny local marker files, never a native store call.
     markers: Mutex<()>,
     jobs: mpsc::SyncSender<Job>,
@@ -783,6 +793,9 @@ impl Store {
     }
 
     fn legacy_paths(&self, slot: Slot) -> Vec<PathBuf> {
+        if slot == Slot::SoundCloud {
+            return Vec::new();
+        }
         if slot == Slot::Proxy {
             let path = self.inner.dirs.proxy_secret_file();
             return vec![path.clone(), path.with_extension("tmp")];
@@ -793,6 +806,7 @@ impl Store {
             Slot::Personal => dirs.personal_web_token_file(),
             Slot::Playback => dirs.credentials_dir().join("credentials.json"),
             Slot::Proxy => unreachable!("proxy legacy paths handled above"),
+            Slot::SoundCloud => unreachable!("SoundCloud has no plaintext legacy grants"),
         };
         let mut paths = vec![path.clone(), path.with_extension("json.tmp")];
         if slot != Slot::Playback {
@@ -1428,12 +1442,26 @@ mod tests {
         })
     }
 
+    fn soundcloud_grant() -> Grant {
+        Grant::SoundCloud(crate::soundcloud::StoredGrant {
+            app: crate::soundcloud::AppCredentials::new(
+                "dummy-client".into(),
+                "dummy-secret".into(),
+            )
+            .unwrap(),
+            access_token: "dummy-access".into(),
+            refresh_token: "dummy-refresh".into(),
+            expires_at: u64::MAX,
+        })
+    }
+
     fn write_legacy(path: &Path, grant: &Grant) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let bytes = match grant {
             Grant::Web(token) => serde_json::to_vec(token).unwrap(),
             Grant::Playback(credentials) => serde_json::to_vec(credentials).unwrap(),
             Grant::Proxy(password) => password.password.as_bytes().to_vec(),
+            Grant::SoundCloud(_) => panic!("SoundCloud has no plaintext legacy credentials"),
         };
         std::fs::write(path, bytes).unwrap();
     }
@@ -1580,6 +1608,7 @@ mod tests {
             web("dummy-personal-client"),
             playback(),
             proxy_password(),
+            soundcloud_grant(),
         ];
         for (slot, grant) in Slot::ALL.into_iter().zip(grants.iter()) {
             store.lease(slot).save(grant.clone()).await.unwrap();
@@ -1590,6 +1619,7 @@ mod tests {
         }
         store.revoke_spotify().unwrap();
         store.revoke(Slot::Proxy).unwrap();
+        store.revoke(Slot::SoundCloud).unwrap();
         for slot in Slot::ALL {
             let lease = store.lease(slot);
             lease.delete().await.unwrap();
@@ -1674,6 +1704,7 @@ mod tests {
             web("dummy-personal-client"),
             playback(),
             proxy_password(),
+            soundcloud_grant(),
         ];
         for (slot, grant) in Slot::ALL.into_iter().zip(grants.iter()) {
             store.lease(slot).save(grant.clone()).await.unwrap();

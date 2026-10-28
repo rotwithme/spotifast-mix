@@ -113,6 +113,7 @@ pub enum Page {
     /// The songs of the latest releases from followed artists.
     NewReleases,
     Search,
+    Mix,
     LikedSongs,
     Albums,
     Artists,
@@ -136,6 +137,7 @@ impl Page {
             Page::TopSongs => "top-songs".into(),
             Page::NewReleases => "new-releases".into(),
             Page::Search => "search".into(),
+            Page::Mix => "mix".into(),
             Page::LikedSongs => "liked".into(),
             Page::Albums => "albums".into(),
             Page::Artists => "artists".into(),
@@ -157,6 +159,7 @@ impl Page {
             "top-songs" => Page::TopSongs,
             "new-releases" => Page::NewReleases,
             "search" => Page::Search,
+            "mix" => Page::Mix,
             "liked" => Page::LikedSongs,
             "albums" => Page::Albums,
             "artists" => Page::Artists,
@@ -1109,6 +1112,7 @@ pub struct Toast {
 /// Actions emitted while drawing and applied afterward to avoid borrow conflicts.
 #[derive(Clone, Debug)]
 pub enum Action {
+    Integration(crate::integration::Action),
     Open(Page),
     /// Opens the radio of a song shown in a list, after caching the row's
     /// song so the page has its name and cover (#644).

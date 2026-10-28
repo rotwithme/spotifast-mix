@@ -21,6 +21,7 @@
   Settings, caches and sign-ins live outside the installation folder, so no
   install, update or removal touches them.
 -->
+<?error Spotifast Mix ships a portable ZIP only. Use package-mix.ps1. Inherited upstream installer identities must not be built. ?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 

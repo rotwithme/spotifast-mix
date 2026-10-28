@@ -307,6 +307,7 @@ pub enum PlayCountRead {
 const PLAY_COUNT_RETRY: Duration = Duration::from_secs(60);
 
 pub struct App {
+    pub integration: crate::integration::State,
     pub dirs: AppDirs,
     pub settings: Settings,
     /// Proxy policy actually handed to network workers. Manual form edits are
@@ -812,7 +813,7 @@ const RECENTS_PAGE: u32 = 50;
 /// Who the desktop's media controls belong to. Links to Spotify, as
 /// `spotify:` URIs or web addresses, are what they may ask Spotifast to open.
 fn media_app() -> fastframe_now_playing::App {
-    let mut app = fastframe_now_playing::App::new("spotifast", "Spotifast");
+    let mut app = fastframe_now_playing::App::new("spotifast-mix", "Spotifast Mix");
     app.uri_schemes = vec!["spotify".into(), "https".into(), "http".into()];
     app
 }
@@ -924,13 +925,13 @@ fn tray_icon_colour(choice: crate::settings::TrayIcon) -> fastframe_tray::IconCo
 fn tray_config() -> fastframe_tray::Config {
     use fastframe_tray::MenuItem;
     fastframe_tray::Config {
-        id: "spotifast",
-        title: "Spotifast".into(),
+        id: "spotifast-mix",
+        title: "Spotifast Mix".into(),
         icon: util::app_icon_rgba,
         template_icon: Some(util::tray_template_rgba),
         themed_icon: true,
         menu: vec![
-            MenuItem::action(TRAY_SHOW, "Show or hide Spotifast"),
+            MenuItem::action(TRAY_SHOW, "Show or hide Spotifast Mix"),
             MenuItem::Separator,
             MenuItem::action(TRAY_PLAY_PAUSE, play_pause_label(false)),
             MenuItem::action(TRAY_NEXT, "Next"),
@@ -1048,6 +1049,7 @@ impl App {
 
         let palette = settings.fixed_palette().unwrap_or_else(Palette::dark);
         let mut app = Self {
+            integration: crate::integration::State::default(),
             custom_themes: theme::Catalog::default(),
             dirs,
             settings,
@@ -1324,6 +1326,10 @@ impl App {
             pixels_per_point: 1.0,
         };
         app.local.volume = app.settings.volume;
+        app.integration.snapshot.volume = app.settings.volume;
+        app.backend.send(Command::Integration(Box::new(
+            crate::integration::Request::LoadLocal,
+        )));
         if let Some(folder) = app.settings.local_files_folder() {
             app.backend.send(Command::ScanLocalFiles(folder));
         }
@@ -1734,6 +1740,9 @@ impl App {
 
     /// Track shown as current, including a recent unconfirmed play request.
     pub fn current_track_uri(&self) -> Option<String> {
+        if self.integration.local_active {
+            return self.mix_now_playing().map(|now| now.uri);
+        }
         if let Some(intent) = &self.intent_track
             && (intent.at.elapsed() < PLAYBACK_HOLD || self.queued_play.is_some())
         {
@@ -1908,6 +1917,17 @@ impl App {
 
     /// Current item for menus, using cached track details when available.
     pub fn now_playing_item(&self) -> Option<PlayableItem> {
+        if self.integration.local_active {
+            return self
+                .integration
+                .snapshot
+                .current
+                .as_ref()
+                .and_then(|entry| match &entry.item {
+                    crate::mix::MediaItem::Spotify(item) => Some((**item).clone()),
+                    crate::mix::MediaItem::SoundCloud(_) => None,
+                });
+        }
         let now = self.now_playing()?;
         if now.is_episode {
             return None;
@@ -1926,6 +1946,9 @@ impl App {
     }
 
     pub fn now_playing(&self) -> Option<NowPlaying> {
+        if self.integration.local_active {
+            return self.mix_now_playing();
+        }
         if let Some(now) = &self.frame_now {
             return Some(now.clone());
         }
@@ -1935,6 +1958,10 @@ impl App {
     }
 
     fn refresh_frame_now(&mut self) {
+        if self.integration.local_active {
+            self.frame_now = self.mix_now_playing();
+            return;
+        }
         self.frame_now = self
             .requested_track_preview()
             .or_else(|| self.now_playing_live())
@@ -2500,6 +2527,7 @@ impl App {
                 } => {
                     self.cover_chosen(&id, request, result);
                 }
+                Event::Integration(event) => self.handle_integration_event(*event),
                 Event::Auth(status) => self.handle_auth(status),
                 Event::Playback(status) => self.handle_playback(status),
                 Event::NetworkStatus(reachable) => {
@@ -2904,7 +2932,7 @@ impl App {
                     self.load_new_release_page(true);
                 }
             }
-            Page::Search => {}
+            Page::Search | Page::Mix => {}
             Page::LikedSongs => {
                 if !self.liked_songs.cache_checked {
                     self.ensure_liked_songs();
@@ -3160,6 +3188,13 @@ impl App {
     }
 
     fn handle_local(&mut self, state: LocalState) {
+        if self.integration.local_active
+            && !state.output_suppressed
+            && state.playback == Playback::Playing
+            && self.local.playback != Playback::Playing
+        {
+            self.apply_integration(crate::integration::Action::SelectMix(false));
+        }
         if self
             .local_transfer_sequence
             .is_some_and(|sequence| sequence != state.track_sequence)
@@ -3711,7 +3746,7 @@ impl App {
         self.lyrics_uri = Some(now.uri.clone());
         self.lyrics_following = true;
         self.lyrics_line_shown = None;
-        if now.is_episode || self.offline {
+        if now.is_episode || self.offline || now.uri.starts_with("soundcloud:") {
             self.lyrics = Loadable::Loaded(None);
             return;
         }
@@ -3744,6 +3779,10 @@ impl App {
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
+        self.recheck_soundcloud_if_due(ctx);
+        if std::mem::take(&mut self.integration.forget_art_pending) {
+            self.backend.art().forget_session_art(ctx);
+        }
         self.poll_custom_themes(ctx);
         if let Some(wait) = self.window_focus(ctx.input(|input| {
             // A minimised window is away even where it keeps focus.
@@ -3798,7 +3837,8 @@ impl App {
 
         // Not on a metered connection or without internet: the check waits
         // for a connection that will do, and checking by hand still works.
-        if self.settings.check_for_updates
+        if crate::updates::ENABLED
+            && self.settings.check_for_updates
             && !self.offline
             && !self.downloads_wait()
             && self
@@ -5278,6 +5318,7 @@ impl App {
                 }
             }
             Page::Settings => self.refresh_autostart(),
+            Page::Mix => {}
         }
     }
 
@@ -6249,6 +6290,9 @@ impl App {
 
     /// Current and upcoming track URIs, deduplicated in playback order.
     pub fn queue_playlist_uris(&self) -> Vec<String> {
+        if self.integration.local_active {
+            return Vec::new();
+        }
         let mut seen = std::collections::HashSet::new();
         let mut uris = Vec::new();
         let queued = self.queue.get();
@@ -6279,6 +6323,37 @@ impl App {
 
     /// Saves the queue as a new playlist.
     fn save_queue_as_playlist(&mut self) {
+        if self.integration.local_active {
+            if !self.integration.local_ready {
+                self.toast_error("Local playlists are still loading. Try again shortly.");
+                return;
+            }
+            let items: Vec<_> = self
+                .integration
+                .snapshot
+                .current
+                .iter()
+                .chain(&self.integration.snapshot.manual)
+                .chain(&self.integration.snapshot.context)
+                .map(|entry| entry.item.media_ref())
+                .collect();
+            if items.is_empty() {
+                return;
+            }
+            let id = self.integration.local.next_id;
+            let name = self
+                .integration
+                .snapshot
+                .context_info
+                .as_ref()
+                .map(|context| context.name.clone())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "Local mix".into());
+            self.apply_integration(crate::integration::Action::CreateLocal(name));
+            self.apply_integration(crate::integration::Action::AddLocal { id, items });
+            self.open(Page::Mix);
+            return;
+        }
         let uris = self.queue_playlist_uris();
         if uris.is_empty() {
             return;
@@ -6428,6 +6503,7 @@ impl App {
     }
 
     fn run_search(&mut self, query: String) {
+        self.search_soundcloud(&query);
         if !query.is_empty()
             && query == self.search.committed
             && !self.search.results.needs_load()
@@ -6450,10 +6526,15 @@ impl App {
             Loadable::Loading
         };
         // An empty query also cancels requests waiting on Spotify's quota.
-        self.backend.api(ApiRequest::Search {
-            query,
-            serial: self.search.serial,
-        });
+        if self.integration.source != crate::integration::Source::SoundCloud {
+            self.backend.api(ApiRequest::Search {
+                query,
+                serial: self.search.serial,
+            });
+        } else {
+            self.search.catalogue_pending = false;
+            self.search.results = Loadable::Loaded(crate::api::models::SearchResults::default());
+        }
     }
 
     /// A search the debounce started while the user may still be typing.
@@ -6606,7 +6687,7 @@ impl App {
     pub fn request_contains(&mut self, uris: Vec<String>) {
         let mut batch = Vec::new();
         for uri in uris {
-            if uri.is_empty()
+            if !uri.starts_with("spotify:")
                 || self.saved.contains_key(&uri)
                 || self.saved_pending.contains(&uri)
                 || uri.starts_with("spotify:local")
@@ -10873,6 +10954,56 @@ impl App {
     /// Apply one queued UI action after drawing, updating optimistic local state
     /// and scheduling any backend work or preference persistence it requires.
     pub(crate) fn apply(&mut self, action: Action, ctx: &egui::Context) {
+        if let Action::Integration(action) = action {
+            self.apply_integration(action);
+            return;
+        }
+        if self.route_mix_transport(&action) {
+            return;
+        }
+        if matches!(
+            &action,
+            Action::TogglePlay
+                | Action::Next
+                | Action::Previous
+                | Action::Seek(_)
+                | Action::SeekBy(_)
+                | Action::PlayContext { .. }
+                | Action::PlayFromRow { .. }
+                | Action::PlayUris { .. }
+                | Action::PlayEpisode { .. }
+                | Action::PlaySearch { .. }
+                | Action::ShufflePlay(_)
+                | Action::Transfer(_)
+                | Action::ActivateReceiver(_)
+        ) {
+            self.supersede_mix_resolution();
+        }
+        if let Action::ToggleSaved(urn) = &action
+            && urn.starts_with("soundcloud:")
+        {
+            let liked = !self.integration.liked.get(urn).copied().unwrap_or(false);
+            self.apply_integration(crate::integration::Action::Like {
+                urn: urn.clone(),
+                liked,
+            });
+            return;
+        }
+        if self.integration.local_active
+            && matches!(
+                &action,
+                Action::PlayContext { .. }
+                    | Action::PlayFromRow { .. }
+                    | Action::PlayUris { .. }
+                    | Action::PlayEpisode { .. }
+                    | Action::ShufflePlay(_)
+                    | Action::PlaySearch { .. }
+                    | Action::Transfer(_)
+                    | Action::ActivateReceiver(_)
+            )
+        {
+            self.apply_integration(crate::integration::Action::SelectMix(false));
+        }
         if matches!(
             &action,
             Action::Open(_)
@@ -10902,6 +11033,7 @@ impl App {
             self.supersede_play_search();
         }
         match action {
+            Action::Integration(_) => unreachable!("integration handled before Spotify actions"),
             Action::Open(page) => self.open(page),
             Action::OpenSongRadio { uri, track } => self.open_song_radio(&uri, &track),
             Action::PrepareTint(url) => {
@@ -10915,6 +11047,14 @@ impl App {
                 }
             }
             Action::OpenLink(uri) => {
+                if let Some(url) = crate::link::soundcloud_link(&uri) {
+                    self.apply_integration(crate::integration::Action::Open(
+                        crate::integration::View::Library,
+                    ));
+                    self.apply_integration(crate::integration::Action::OpenLink(url));
+                    self.actions.push(Action::ShowWindow);
+                    return;
+                }
                 // The window first: a link is the user asking for the
                 // app, signed in or not, and the page follows when it can.
                 self.prerelease_request = None;
@@ -12397,6 +12537,12 @@ impl App {
     }
 
     fn check_for_updates(&mut self, manual: bool) {
+        if !crate::updates::ENABLED {
+            if manual {
+                self.toast(crate::updates::UNAVAILABLE);
+            }
+            return;
+        }
         if self.update_checking
             || (self.offline && self.update_source.is_github())
             || !matches!(
@@ -12937,9 +13083,9 @@ impl App {
     /// Keeps the current track in the window and taskbar title (#94).
     fn sync_window_title(&mut self, ctx: &egui::Context) {
         let title = match self.now_playing().filter(|now| now.playing) {
-            Some(now) if now.subtitle.is_empty() => format!("{} - Spotifast", now.title),
+            Some(now) if now.subtitle.is_empty() => format!("{} - Spotifast Mix", now.title),
             Some(now) => format!("{} - {}", now.subtitle, now.title),
-            None => "Spotifast".to_string(),
+            None => "Spotifast Mix".to_string(),
         };
         if title != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -13105,15 +13251,19 @@ impl App {
 
     /// Persist state when a window closes (to the tray or for good).
     pub fn save_state(&mut self) {
+        self.persist_mix_session();
         self.save_settings();
         self.save_session();
     }
 
     /// Write the restorable session: page, recents, resume point, sorts.
     fn save_session(&mut self) {
+        self.persist_mix_session();
         self.session_dirty = false;
         self.last_session_save = Instant::now();
-        if let Some(now) = self.now_playing() {
+        if !self.integration.local_active
+            && let Some(now) = self.now_playing()
+        {
             self.resume_context = self.playing_context_uri();
             self.resume_track = Some(now.uri.clone());
             self.resume_position_ms = now.position_ms;
@@ -13682,6 +13832,7 @@ fn cover_error(locale: Locale, error: &crate::api::client::ApiError) -> String {
     }
 }
 
+mod integration;
 mod radio;
 
 #[cfg(test)]
@@ -20821,7 +20972,7 @@ mod tests {
         app.backend.shutdown();
     }
 
-    fn test_app(name: &str) -> App {
+    pub(super) fn test_app(name: &str) -> App {
         let root =
             std::env::temp_dir().join(format!("spotifast-{name}-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -23797,21 +23948,20 @@ mod tests {
         );
     }
 
-    /// The daily update check waits for a connection that is not metered,
-    /// and, where the app follows the system's word on it, for the internet.
-    /// Where it does not (Windows), a "no internet" hint holds nothing back.
+    /// An unconfigured fork must never check upstream, including profiles
+    /// that retained the old update preference, on every network condition.
     #[test]
-    fn a_metered_connection_puts_off_the_update_check() {
+    fn an_unconfigured_fork_never_checks_upstream_on_any_network() {
         for (metered, online, follows, checked, why) in [
-            (false, true, true, true, "not checked on a free network"),
+            (false, true, true, false, "fork checked on a free network"),
             (true, true, false, false, "checked on a metered network"),
             (false, false, true, false, "checked without internet"),
             (
                 false,
                 false,
                 false,
-                true,
-                "held by a hint it does not follow",
+                false,
+                "fork checked ignoring an offline hint",
             ),
         ] {
             let mut app = headless_app();
@@ -30675,7 +30825,7 @@ mod tests {
                 "unknown",
                 // Local playback is this computer, which Spotify has not
                 // named because it is not a remote device.
-                "Spotifast",
+                "Spotifast Mix",
             ]
         );
         // No devices seen yet is an empty array, not an empty string, so a
@@ -31159,7 +31309,7 @@ mod tests {
             .unwrap();
         let call = |uri: &str| {
             client.call_method(
-                Some("org.mpris.MediaPlayer2.spotifast"),
+                Some("org.mpris.MediaPlayer2.spotifast-mix"),
                 "/org/mpris/MediaPlayer2",
                 Some("org.mpris.MediaPlayer2.Player"),
                 "OpenUri",
@@ -31186,7 +31336,7 @@ mod tests {
         assert!(matches!(app.actions.as_slice(), [Action::OpenLink(_)]));
         let schemes: Vec<String> = zbus::blocking::Proxy::new(
             &client,
-            "org.mpris.MediaPlayer2.spotifast",
+            "org.mpris.MediaPlayer2.spotifast-mix",
             "/org/mpris/MediaPlayer2",
             "org.mpris.MediaPlayer2",
         )

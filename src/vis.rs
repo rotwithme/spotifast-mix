@@ -705,6 +705,82 @@ mod tests {
     }
 
     #[test]
+    fn the_tap_follows_equalizer_and_is_independent_of_output_volume() {
+        struct Volume(f64);
+        impl VolumeGetter for Volume {
+            fn attenuation_factor(&self) -> f64 {
+                self.0
+            }
+        }
+        let render = |equalizer_on: bool, volume: f64| {
+            let mut bands = [0.0; 10];
+            bands[4] = 6.0; // Boost the 1 kHz input at its own EQ band.
+            let eq = Arc::new(Mutex::new(crate::eq::EqSettings {
+                on: equalizer_on,
+                bands_db: bands,
+                ..Default::default()
+            }));
+            let tap = AudioTap::new();
+            let recorded = Arc::new(Mutex::new(Vec::new()));
+            let mut pipeline = Tapped::new(
+                Box::new(RecordedSink(Arc::clone(&recorded))),
+                crate::sink::AudioControl::new(crate::sink::DEFAULT_BUFFER_MS),
+                Arc::clone(&tap),
+                Box::new(Volume(volume)),
+                true,
+                eq,
+                Arc::new(std::sync::atomic::AtomicU64::new(1.0f64.to_bits())),
+            );
+            let samples = (0..8192)
+                .flat_map(|frame| {
+                    let sample = 0.02
+                        * (frame as f64 * 1000.0 * std::f64::consts::TAU / f64::from(SAMPLE_RATE))
+                            .sin();
+                    [sample, sample]
+                })
+                .collect();
+            pipeline
+                .write(AudioPacket::Samples(samples), &mut Converter::new(None))
+                .unwrap();
+            let shown = tap.window(1024, 0);
+            let heard = recorded.lock().unwrap().clone();
+            (shown, heard)
+        };
+        let rms = |samples: &[f64]| {
+            (samples.iter().map(|sample| sample * sample).sum::<f64>() / samples.len() as f64)
+                .sqrt()
+        };
+        let shown_rms = |samples: &[f32]| {
+            rms(&samples
+                .iter()
+                .map(|sample| f64::from(*sample))
+                .collect::<Vec<_>>())
+        };
+        let (flat, _) = render(false, 1.0);
+        let (boosted, full_output) = render(true, 1.0);
+        let (quiet, quiet_output) = render(true, 0.25);
+        let (muted, muted_output) = render(true, 0.0);
+        let eq_gain = shown_rms(&boosted) / shown_rms(&flat);
+        assert!(
+            (1.8..2.2).contains(&eq_gain),
+            "the visualizer must show the EQ's 6 dB boost, got {eq_gain}"
+        );
+        assert_eq!(
+            boosted, quiet,
+            "lowering output volume must not move the picture"
+        );
+        assert_eq!(
+            boosted, muted,
+            "zero output volume must keep the post-EQ signal"
+        );
+        assert!(shown_rms(&muted) > 0.02);
+        let heard_gain = rms(&quiet_output[quiet_output.len() - 4096..])
+            / rms(&full_output[full_output.len() - 4096..]);
+        assert!((heard_gain - 0.25).abs() < 0.001);
+        assert!(muted_output.iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
     fn replacing_a_track_discards_held_audio_before_its_silent_intro() {
         for equalizer_on in [false, true] {
             let control = crate::sink::AudioControl::new(crate::sink::DEFAULT_BUFFER_MS);
