@@ -361,7 +361,7 @@ pub struct Settings {
     /// macOS: keep Spotifast in the Dock and Cmd-Tab. Off makes it a
     /// menu-bar app, whose menu-bar icon is the way back (#837).
     pub mac_show_in_dock: bool,
-    /// Ask GitHub once a day whether a newer release exists.
+    /// Ask GitHub at startup and every two minutes whether a newer release exists.
     pub check_for_updates: bool,
     pub download_updates_automatically: bool,
     /// Context URIs and the local Liked Songs key, in pin order.

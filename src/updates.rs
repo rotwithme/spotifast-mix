@@ -1,10 +1,13 @@
 //! Signed updates from this fork's own GitHub release channel.
 
 pub use fastframe_update::{
-    CHECK_INTERVAL, DownloadState, Installation, Kind, Prepared, Release, Source, Unsupported,
-    Updater,
+    DownloadState, Installation, Kind, Prepared, Release, Source, Unsupported, Updater,
 };
 use fastframe_update::{MacConfig, ReqwestTransport, UpdateConfig};
+
+/// Check promptly while staying below GitHub's anonymous request allowance.
+/// This fork overrides fastframe's once-a-day default without changing it.
+pub const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2 * 60);
 
 pub const ENABLED: bool = cfg!(all(target_os = "windows", target_arch = "x86_64"));
 pub const UNAVAILABLE: &str =

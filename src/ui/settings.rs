@@ -702,7 +702,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         RowText::new(
             update_checks.clone(),
             if crate::updates::ENABLED {
-                gettext(locale, "Checks GitHub once a day. No personal data is sent.")
+                gettext(locale, "Checks GitHub at startup and every two minutes. No personal data is sent.")
             } else {
                 crate::updates::UNAVAILABLE.into()
             },

@@ -3964,7 +3964,7 @@ mod tests {
             ("Ctrl+0", "Interface zoom"),
             ("Rust", "About"),
             if crate::updates::ENABLED {
-                ("Checks GitHub once a day", "Automatic update checks")
+                ("Checks GitHub at startup", "Automatic update checks")
             } else {
                 ("Windows x64 portable build", "Updates")
             },

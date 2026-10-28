@@ -393,7 +393,7 @@ main fields are:
 | `tray_icon` | `colour` | Linux and Windows: the tray icon in `colour`, or in `white` or `black` to match the panel or taskbar. macOS ignores it: the menu bar draws its icon black or white to match itself |
 | `mac_notch_widget` | `false` | Show interactive Now Playing widget when hovering over the MacBook notch (macOS only) |
 | `mac_show_in_dock` | `true` | macOS only: show Spotifast in the Dock and Cmd+Tab. `false` keeps it in the menu bar only; the menu-bar icon always stays |
-| `check_for_updates` | `true` | Ask GitHub once a day for a newer release |
+| `check_for_updates` | `true` | Ask GitHub at startup and every two minutes for a newer release |
 | `web_client_id` | none | Client ID of your own Spotify app, which Spotifast signs in with |
 | `personal_app_nudge_at` | none | Legacy daily-reminder timestamp, retained for older releases |
 | `personal_app_intro_seen` | `false` | Whether the Premium personal-app introduction was dismissed or followed (available since 0.8.0) |

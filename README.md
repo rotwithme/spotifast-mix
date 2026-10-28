@@ -60,6 +60,9 @@ credentials, IPC, and desktop identity, and cannot install upstream Spotifast up
 ## Updates
 
 Windows x64 portable builds check [this project's GitHub releases](https://github.com/rotwithme/spotifast-mix/releases).
+Checks run at startup and every two minutes while the app is running, including
+when idle or in the tray. A new stable release normally appears within two
+minutes, subject to connectivity and GitHub availability.
 A new build appears in the existing update icon. Open it, download the update,
 and choose **Restart to update**. The app verifies the publisher signature and
 download checksum, then replaces its executable while preserving accounts,

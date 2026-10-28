@@ -157,7 +157,10 @@ network behavior remains documented in [How it connects](how-it-connects.md).
 The custom app has no telemetry or hosted backend. Windows x64 portable updates
 come from [rotwithme/spotifast-mix](https://github.com/rotwithme/spotifast-mix/releases),
 using this fork's own embedded Ed25519 publisher key. New releases appear in the
-existing update icon. Download and choose **Restart to update**; only the EXE is
+existing update icon. The app checks at startup and every two minutes while
+running, even when idle or in the tray, so detection normally takes up to two
+minutes rather than a day. These are periodic checks, not instant push delivery;
+offline or metered connections can delay them. Download and choose **Restart to update**; only the EXE is
 replaced, and the helper restores the previous EXE if startup fails. Package-manager
 installs and other platform builds keep their existing installation boundaries.
 

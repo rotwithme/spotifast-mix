@@ -3840,13 +3840,9 @@ impl App {
 
         // Not on a metered connection or without internet: the check waits
         // for a connection that will do, and checking by hand still works.
-        if crate::updates::ENABLED
-            && self.settings.check_for_updates
-            && !self.offline
-            && !self.downloads_wait()
-            && self
-                .last_update_check
-                .is_none_or(|at| at.elapsed() >= crate::updates::CHECK_INTERVAL)
+        if self
+            .update_check_delay()
+            .is_some_and(|delay| delay.is_zero())
         {
             self.check_for_updates(false);
         }
@@ -12564,6 +12560,26 @@ impl App {
         });
     }
 
+    /// The same deadline drives checks and idle wakeups. An active request or
+    /// download must not leave an overdue timer spinning the UI loop.
+    fn update_check_delay(&self) -> Option<Duration> {
+        if !crate::updates::ENABLED
+            || !self.settings.check_for_updates
+            || self.offline
+            || self.downloads_wait()
+            || self.update_checking
+            || !matches!(
+                self.update_download,
+                crate::updates::DownloadState::Idle | crate::updates::DownloadState::Failed(_)
+            )
+        {
+            return None;
+        }
+        Some(self.last_update_check.map_or(Duration::ZERO, |at| {
+            crate::updates::CHECK_INTERVAL.saturating_sub(at.elapsed())
+        }))
+    }
+
     /// A connected Premium listener still on the shared grant from before
     /// 0.14.2, without a personal app, who could set one up, and nothing
     /// else is asking for their attention.
@@ -12947,7 +12963,15 @@ impl App {
         let polling = self
             .is_connected()
             .then(|| self.connected_repaint_interval());
-        [playing, pending, polling].into_iter().flatten().min()
+        // The first logic pass checks immediately. Once it has started, keep
+        // checking even with no Spotify account, playback, or UI interaction.
+        let updates = self
+            .last_update_check
+            .and_then(|_| self.update_check_delay());
+        [playing, pending, polling, updates]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     /// How long the headless loop may sleep after this tick: until the next
@@ -23952,7 +23976,63 @@ mod tests {
         );
     }
 
-    /// The fork's own daily update check respects network conditions and the
+    #[test]
+    fn release_checks_wake_an_idle_app_and_do_not_spin_during_blocked_work() {
+        let mut app = headless_app();
+        app.settings.check_for_updates = true;
+        app.offline = false;
+        change_power(&app, |conditions| {
+            conditions.metered = false;
+            conditions.online = true;
+        });
+        if !crate::updates::ENABLED {
+            assert_eq!(app.update_check_delay(), None);
+            app.backend.shutdown();
+            return;
+        }
+        assert_eq!(crate::updates::CHECK_INTERVAL, Duration::from_secs(120));
+        assert_eq!(
+            app.update_check_delay(),
+            Some(Duration::ZERO),
+            "startup check"
+        );
+        let halfway = crate::updates::CHECK_INTERVAL / 2;
+        app.last_update_check = Some(Instant::now() - halfway);
+        let delay = app
+            .next_pass()
+            .expect("idle app must wake for the next check");
+        assert!(delay > Duration::ZERO && delay <= halfway);
+        app.last_update_check = Some(Instant::now() - crate::updates::CHECK_INTERVAL);
+        assert_eq!(app.next_pass(), Some(Duration::ZERO));
+        app.update_checking = true;
+        assert_eq!(
+            app.next_pass(),
+            None,
+            "in-flight requests wake us on completion"
+        );
+        app.update_checking = false;
+        app.update_download = crate::updates::DownloadState::Downloading {
+            received: 1,
+            total: Some(2),
+        };
+        assert_eq!(
+            app.next_pass(),
+            None,
+            "downloads must not leave an overdue timer"
+        );
+        app.update_download = crate::updates::DownloadState::Idle;
+        change_power(&app, |conditions| conditions.metered = true);
+        assert_eq!(app.next_pass(), None);
+        change_power(&app, |conditions| conditions.metered = false);
+        app.offline = true;
+        assert_eq!(app.next_pass(), None);
+        app.offline = false;
+        app.settings.check_for_updates = false;
+        assert_eq!(app.next_pass(), None);
+        app.backend.shutdown();
+    }
+
+    /// The fork's automatic update check respects network conditions and the
     /// availability of a supported update channel on this platform.
     #[test]
     fn fork_update_checks_respect_network_conditions() {
@@ -23992,7 +24072,7 @@ mod tests {
     }
 
     /// An automatic download put off on a metered connection starts once the
-    /// connection is not, rather than at the next daily check, and not while
+    /// connection is not, rather than at the next scheduled check, and not while
     /// the connection is down: a download that fails would stop the next
     /// automatic one.
     #[test]
@@ -25637,7 +25717,7 @@ mod tests {
     }
 
     #[test]
-    fn the_daily_update_check_only_announces_a_new_release() {
+    fn automatic_update_checks_only_announce_a_new_release() {
         let mut app = headless_app();
         app.update_checking = true;
         app.handle_backend_events(vec![Event::UpdateChecked {
@@ -25646,7 +25726,7 @@ mod tests {
         }]);
         assert!(
             app.toasts.is_empty(),
-            "the current release needs no daily toast"
+            "the current release needs no automatic toast"
         );
 
         app.update_checking = true;
