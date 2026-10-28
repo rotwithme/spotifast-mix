@@ -1430,7 +1430,7 @@ msgstr "Spotifast Mix 會隱藏到選單列。可從選單列圖像或按 Cmd+Q 
 #: src/ui/settings.rs:705
 msgid ""
 "Checks GitHub at startup and every two minutes. No personal data is sent."
-msgstr ""
+msgstr "啟動時及每兩分鐘在 GitHub 上檢查更新。不會傳送個人資料。"
 
 #: src/ui/settings.rs:711
 msgid "Output buffer"

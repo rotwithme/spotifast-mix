@@ -1450,7 +1450,7 @@ msgstr ""
 #: src/ui/settings.rs:705
 msgid ""
 "Checks GitHub at startup and every two minutes. No personal data is sent."
-msgstr ""
+msgstr "시작할 때와 2분마다 GitHub에서 업데이트를 확인합니다. 개인 데이터는 전송하지 않습니다."
 
 #: src/ui/settings.rs:711
 msgid "Output buffer"
