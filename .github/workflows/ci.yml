@@ -145,6 +145,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      # These source fixtures need no compiled app. Fail before expensive
+      # native builds if a shell or packaging boundary regresses.
+      - name: Fork installer isolation regressions
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python packaging\windows\test-mix-packaging.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: GUI build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -219,15 +227,6 @@ jobs:
           $actual = $contents | Select-Object -ExpandProperty Name | Sort-Object
           if (Compare-Object $expected $actual) { throw 'Unexpected files in portable ZIP.' }
           & (Join-Path $payload 'spotifast-mix.exe') --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # The inherited Inno/MSI entrypoints must remain blocked. These tests
-      # exercise that boundary instead of installing an upstream identity.
-      - name: Fork installer isolation regressions
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          python packaging\windows\test-mix-packaging.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: macOS bundle identity and helper startup

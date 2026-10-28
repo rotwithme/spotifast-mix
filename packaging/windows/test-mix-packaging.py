@@ -29,11 +29,18 @@ class ForkIsolationTests(unittest.TestCase):
             # documentation check. Native executable validation runs in CI too.
             binary = root / "version-probe.cmd"
             binary.write_text("@echo off\necho spotifast-mix 1.2.3\nexit /b 0\n")
-            subprocess.run([
+            # CI runs this Python process from PowerShell 7. Let its Windows
+            # PowerShell child build its own module path instead of loading
+            # incompatible PowerShell 7 modules from the inherited environment.
+            environment = {key: value for key, value in os.environ.items()
+                           if key.casefold() != "psmodulepath"}
+            result = subprocess.run([
                 "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-File", str(HERE / "package-mix.ps1"), "-NoBuild",
                 "-BinaryPath", str(binary), "-OutputDirectory", str(root / "output"),
-            ], check=True, capture_output=True, text=True)
+            ], env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0,
+                             f"Packager failed:\n{result.stdout}\n{result.stderr}")
             stem = "spotifast-mix-v1.2.3-x86_64-pc-windows-msvc"
             archive = root / f"output/{stem}.zip"
             with zipfile.ZipFile(archive) as package:
