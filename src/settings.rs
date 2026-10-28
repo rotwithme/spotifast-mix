@@ -1007,8 +1007,10 @@ mod tests {
     fn fork_defaults_keep_legacy_preferences_readable_without_provider_secrets() {
         let empty: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(empty.device_name, "Spotifast Mix");
-        assert!(!empty.check_for_updates);
+        assert_eq!(empty.check_for_updates, crate::updates::ENABLED);
         assert!(!empty.download_updates_automatically);
+        let opted_out: Settings = serde_json::from_str(r#"{"check_for_updates":false}"#).unwrap();
+        assert!(!opted_out.check_for_updates);
         let saved: Settings = serde_json::from_value(serde_json::json!({
             "device_name": "Living room", "check_for_updates": true,
             "download_updates_automatically": true, "volume": 37
