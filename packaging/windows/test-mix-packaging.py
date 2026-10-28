@@ -76,6 +76,19 @@ class ForkIsolationTests(unittest.TestCase):
         self.assertNotIn("SPOTIFAST_UPDATE_SIGNING_KEY", workflow)
         self.assertNotIn("AZURE_", workflow)
 
+    def test_windows_release_gate_keeps_every_non_mac_job_required(self):
+        workflow = (ROOT / ".github/workflows/mix-release.yml").read_text(encoding="utf-8")
+        required = re.search(r"\$required = @\(([^\n]+)\)", workflow).group(1)
+        self.assertEqual(re.findall(r"'([^']+)'", required), [
+            "policy", "docs", "scope", "quality", "test (windows-latest)",
+            "test (windows-11-arm)", "test (ubuntu-latest)", "Nix package",
+        ])
+        self.assertIn("$ci.headSha -ne $commit", workflow)
+        self.assertIn("$ci.conclusion -in @('cancelled'", workflow)
+        self.assertIn("$job[0].status -ne 'completed'", workflow)
+        self.assertIn("$job[0].conclusion -ne 'success'", workflow)
+        self.assertIn("macOS (reported separately; not a Windows release gate)", workflow)
+
     @unittest.skipUnless(shutil.which("ruby"), "requires Ruby OpenSSL")
     def test_release_signature_binds_the_manifest_to_the_committed_public_key(self):
         with tempfile.TemporaryDirectory() as directory:

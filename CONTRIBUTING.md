@@ -15,6 +15,12 @@ Windows distribution uses an isolated portable ZIP and this fork's signed
 GitHub release channel. Upstream updates and inherited Windows installer
 takeover remain disabled.
 
+For this fork's Windows portable releases, the required CI gates on the exact
+release commit are policy, documentation, scope, quality, Windows x64 and ARM64,
+Ubuntu, and Nix. macOS results are reported separately and do not block Windows
+publication. The generic CI suite and its tests still run unchanged; a failing
+macOS job is not macOS validation and does not authorize a macOS release.
+
 ## Before opening an issue
 
 Search open and closed issues first. For a bug, use the bug form and include

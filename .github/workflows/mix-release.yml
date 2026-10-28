@@ -89,16 +89,31 @@ jobs:
         run: ruby packaging/windows/sign-mix-release.rb dist/checksums.txt assets/update-public-key.hex
       - name: Verify the signature independently of the private key
         run: ruby packaging/windows/sign-mix-release.rb --verify dist/checksums.txt assets/update-public-key.hex
-      - name: Require passing CI before public publication
+      - name: Require Windows release gates and report macOS separately
         if: github.event_name == 'push' || inputs.publish == true
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $commit = (& git rev-parse HEAD).Trim()
-          $runs = @(& gh run list --repo $env:GITHUB_REPOSITORY --workflow ci.yml --commit $commit --branch main --json status,conclusion --limit 20 | ConvertFrom-Json)
+          $runs = @(& gh run list --repo $env:GITHUB_REPOSITORY --workflow ci.yml --commit $commit --branch main --json databaseId --limit 1 | ConvertFrom-Json)
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ($runs.Count -eq 0 -or $runs[0].status -ne 'completed' -or $runs[0].conclusion -ne 'success') { throw 'Wait for the latest main CI run on this exact commit to pass before publishing.' }
+          if ($runs.Count -ne 1) { throw 'A main CI run is required on this exact commit before publishing.' }
+          $runId = [string]$runs[0].databaseId
+          $ci = & gh run view $runId --repo $env:GITHUB_REPOSITORY --json 'headSha,status,conclusion,jobs,url' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($ci.headSha -ne $commit) { throw 'The CI run must match the release commit exactly.' }
+          if ($ci.conclusion -in @('cancelled','timed_out','action_required','startup_failure','stale')) { throw 'The latest main CI run was cancelled or could not finish its checks.' }
+          $required = @('policy','docs','scope','quality','test (windows-latest)','test (windows-11-arm)','test (ubuntu-latest)','Nix package')
+          $mac = @($ci.jobs | Where-Object name -eq 'test (macos-latest)')
+          $macStatus = if ($mac.Count -eq 1) { "$($mac[0].status) / $($mac[0].conclusion)" } else { 'not run' }
+          "Windows portable release CI: $($ci.url)" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          "macOS (reported separately; not a Windows release gate): $macStatus" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          foreach ($name in $required) {
+            $job = @($ci.jobs | Where-Object name -eq $name)
+            if ($job.Count -ne 1 -or $job[0].status -ne 'completed' -or $job[0].conclusion -ne 'success') { throw "Wait for required CI job '$name' on this exact commit to pass before publishing." }
+            "$name : success" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          }
       - name: Publish version tags or stage a manually requested draft
         env:
           GH_TOKEN: ${{ github.token }}
