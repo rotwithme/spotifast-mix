@@ -20,6 +20,7 @@ struct Reply {
     status: u16,
     body: String,
     delay: Duration,
+    location: Option<String>,
 }
 
 impl Reply {
@@ -28,6 +29,16 @@ impl Reply {
             status: 200,
             body: body.into(),
             delay: Duration::ZERO,
+            location: None,
+        }
+    }
+
+    fn redirect(location: String) -> Self {
+        Self {
+            status: 302,
+            body: String::new(),
+            delay: Duration::ZERO,
+            location: Some(location),
         }
     }
 }
@@ -84,8 +95,12 @@ impl Fixture {
                 };
                 let reply = route(request);
                 tokio::time::sleep(reply.delay).await;
+                let location = reply
+                    .location
+                    .map(|location| format!("Location: {location}\r\n"))
+                    .unwrap_or_default();
                 let response = format!(
-                    "HTTP/1.1 {} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{location}Connection: close\r\n\r\n{}",
                     reply.status,
                     reply.body.len(),
                     reply.body
@@ -152,6 +167,208 @@ fn dummy_grant() -> StoredGrant {
         refresh_token: "dummy-refresh".into(),
         expires_at: u64::MAX,
     }
+}
+
+#[tokio::test]
+async fn stream_redirect_authenticates_only_the_api_origin_and_preserves_range() {
+    let cdn_requests = Arc::new(AtomicUsize::new(0));
+    let received = cdn_requests.clone();
+    let cdn = Fixture::new(move |request| {
+        received.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.path, "/audio.aac?signature=dummy-signed-url");
+        let headers = request.headers.to_ascii_lowercase();
+        assert!(!headers.contains("authorization:"));
+        assert!(!headers.contains("dummy-access"));
+        assert!(headers.contains("range: bytes=4-7"));
+        let mut reply = Reply::json("data");
+        reply.status = 206;
+        reply
+    })
+    .await;
+    let cdn_url = cdn
+        .client
+        .inner
+        .base
+        .join("audio.aac?signature=dummy-signed-url")
+        .unwrap();
+    let api_requests = Arc::new(AtomicUsize::new(0));
+    let received = api_requests.clone();
+    let fixture = Fixture::new(move |request| {
+        received.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(request.path, "/tracks/soundcloud:tracks:1/streams/uuid/hls");
+        let headers = request.headers.to_ascii_lowercase();
+        assert!(headers.contains("authorization: oauth dummy-access"));
+        assert!(headers.contains("range: bytes=4-7"));
+        Reply::redirect(cdn_url.to_string())
+    })
+    .await;
+    let url = fixture
+        .client
+        .inner
+        .base
+        .join("tracks/soundcloud:tracks:1/streams/uuid/hls")
+        .unwrap();
+    for invalid_range in [(0, 0), (u64::MAX, 2)] {
+        assert_eq!(
+            fixture
+                .client
+                .stream_response(url.clone(), Some(invalid_range))
+                .await
+                .unwrap_err(),
+            Error::InvalidResource
+        );
+    }
+    assert_eq!(api_requests.load(Ordering::SeqCst), 0);
+    let response = fixture
+        .client
+        .stream_response(url, Some((4, 4)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.bytes().await.unwrap().as_ref(), b"data");
+    assert_eq!(api_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(cdn_requests.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn stream_api_unauthorized_refreshes_once_across_the_entire_redirect_chain() {
+    let refreshes = Arc::new(AtomicUsize::new(0));
+    let rotated = refreshes.clone();
+    let api_requests = Arc::new(AtomicUsize::new(0));
+    let received = api_requests.clone();
+    let fixture = Fixture::new(move |request| {
+        if request.path == "/oauth/token" {
+            assert_eq!(request.method, "POST");
+            assert!(request.body.contains("refresh_token=dummy-refresh"));
+            rotated.fetch_add(1, Ordering::SeqCst);
+            return Reply::json(
+                r#"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}"#,
+            );
+        }
+        received.fetch_add(1, Ordering::SeqCst);
+        let headers = request.headers.to_ascii_lowercase();
+        if request.path == "/stream" && headers.contains("authorization: oauth new-access") {
+            return Reply::redirect("/still-rejected".into());
+        }
+        if request.path == "/still-rejected" {
+            assert!(headers.contains("authorization: oauth new-access"));
+        } else {
+            assert_eq!(request.path, "/stream");
+            assert!(headers.contains("authorization: oauth dummy-access"));
+        }
+        let mut reply = Reply::json("{}");
+        reply.status = 401;
+        reply
+    })
+    .await;
+    let url = fixture.client.inner.base.join("stream").unwrap();
+    assert_eq!(
+        fixture.client.stream_response(url, None).await.unwrap_err(),
+        Error::SignInExpired
+    );
+    assert_eq!(refreshes.load(Ordering::SeqCst), 1);
+    assert_eq!(api_requests.load(Ordering::SeqCst), 3);
+    let loaded = fixture
+        .client
+        .inner
+        .store
+        .lease(Slot::SoundCloud)
+        .load()
+        .await
+        .unwrap();
+    let Some(credentials::Grant::SoundCloud(grant)) = loaded.grant else {
+        panic!("missing rotated grant");
+    };
+    assert_eq!(grant.refresh_token, "new-refresh");
+}
+
+#[tokio::test]
+async fn stream_cdn_unauthorized_never_sends_or_refreshes_the_account_token() {
+    let api_requests = Arc::new(AtomicUsize::new(0));
+    let received = api_requests.clone();
+    let fixture = Fixture::new(move |_| {
+        received.fetch_add(1, Ordering::SeqCst);
+        panic!("a CDN rejection must not contact the API or token endpoint");
+    })
+    .await;
+    let cdn_requests = Arc::new(AtomicUsize::new(0));
+    let received = cdn_requests.clone();
+    let cdn = Fixture::new(move |request| {
+        received.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(request.path, "/expired.aac");
+        assert!(
+            !request
+                .headers
+                .to_ascii_lowercase()
+                .contains("authorization:")
+        );
+        let mut reply = Reply::json("{}");
+        reply.status = 401;
+        reply
+    })
+    .await;
+    let url = cdn.client.inner.base.join("expired.aac").unwrap();
+    let response = fixture.client.stream_response(url, None).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(api_requests.load(Ordering::SeqCst), 0);
+    assert_eq!(cdn_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture
+            .client
+            .inner
+            .session
+            .lock()
+            .await
+            .as_ref()
+            .unwrap()
+            .grant
+            .refresh_token,
+        "dummy-refresh"
+    );
+}
+
+#[tokio::test]
+async fn stream_redirects_reject_unsafe_targets_before_another_request() {
+    for target in [
+        "http://example.com/audio.aac",
+        "https://user:password@api.soundcloud.com/audio.aac",
+        "https://api.soundcloud.com/audio.aac#fragment",
+    ] {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let received = requests.clone();
+        let fixture = Fixture::new(move |request| {
+            received.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(request.path, "/stream");
+            assert!(
+                request
+                    .headers
+                    .to_ascii_lowercase()
+                    .contains("authorization: oauth dummy-access")
+            );
+            Reply::redirect(target.into())
+        })
+        .await;
+        let url = fixture.client.inner.base.join("stream").unwrap();
+        assert_eq!(
+            fixture.client.stream_response(url, None).await.unwrap_err(),
+            Error::InvalidResource
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+    let requests = Arc::new(AtomicUsize::new(0));
+    let received = requests.clone();
+    let fixture = Fixture::new(move |_| {
+        received.fetch_add(1, Ordering::SeqCst);
+        Reply::redirect("/stream".into())
+    })
+    .await;
+    let url = fixture.client.inner.base.join("stream").unwrap();
+    assert_eq!(
+        fixture.client.stream_response(url, None).await.unwrap_err(),
+        Error::InvalidResponse
+    );
+    assert_eq!(requests.load(Ordering::SeqCst), 6);
 }
 
 #[tokio::test]
@@ -273,6 +490,7 @@ async fn ambiguous_refresh_is_not_replayed_or_restored() {
             status: 500,
             body: "{\"error\":\"dummy-secret\"}".into(),
             delay: Duration::ZERO,
+            location: None,
         }
     })
     .await;
@@ -465,6 +683,7 @@ async fn disconnect_revokes_only_soundcloud_and_stops_restoration() {
             status: 204,
             body: String::new(),
             delay: Duration::ZERO,
+            location: None,
         }
     })
     .await;
@@ -522,6 +741,7 @@ async fn expired_disconnect_is_locally_complete_without_claiming_remote_revocati
             status: 401,
             body: r#"{"error":"dummy-secret"}"#.into(),
             delay: Duration::ZERO,
+            location: None,
         }
     })
     .await;

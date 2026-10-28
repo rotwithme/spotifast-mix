@@ -457,15 +457,10 @@ impl Worker {
         let mutations = crate::http::build_collection_client(&config.proxy)
             .map(Http::new)
             .unwrap_or_else(Http::unavailable);
-        let client = Arc::new(soundcloud::Client::new(
-            http.clone(),
-            mutations.clone(),
-            store,
-        ));
+        let client = Arc::new(soundcloud::Client::new(http, mutations.clone(), store));
         let callback = Arc::clone(&notify);
         let runtime = mix::MixRuntime::spawn(
             config,
-            http,
             Arc::clone(&client),
             Arc::new(move |event| callback(Event::Mix(event))),
         );

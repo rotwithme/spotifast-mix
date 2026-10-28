@@ -978,6 +978,84 @@ impl Client {
         Ok(streams)
     }
 
+    /// API stream URLs need OAuth even after `/streams` succeeded. Resolve
+    /// redirects ourselves so a CDN never receives the account's credentials.
+    pub(crate) async fn stream_response(
+        &self,
+        mut url: Url,
+        range: Option<(u64, u64)>,
+    ) -> Result<reqwest::Response> {
+        let range = range
+            .map(|(offset, length)| {
+                let end = length
+                    .checked_sub(1)
+                    .and_then(|length| offset.checked_add(length))
+                    .ok_or(Error::InvalidResource)?;
+                Ok::<_, Error>(format!("bytes={offset}-{end}"))
+            })
+            .transpose()?;
+        let generation = self.generation();
+        let _permit = self
+            .inner
+            .requests
+            .acquire()
+            .await
+            .map_err(|_| Error::Cancelled)?;
+        let mut redirects = 0;
+        let mut refreshed = false;
+        loop {
+            validate_stream_url(&url)?;
+            self.check_generation(generation)?;
+            let authenticated = url.origin() == self.inner.base.origin();
+            let token = if authenticated {
+                self.check_rate_limit()?;
+                Some(self.access_token(None).await?)
+            } else {
+                None
+            };
+            self.check_generation(generation)?;
+            let mut request = self
+                .inner
+                .mutations
+                .client()
+                .map_err(|_| Error::ProxyConfiguration)?
+                .get(url.clone());
+            if let Some(token) = &token {
+                request = request.header("Authorization", format!("OAuth {token}"));
+            }
+            if let Some(range) = &range {
+                request = request.header(reqwest::header::RANGE, range);
+            }
+            let response = request.send().await.map_err(|_| Error::Network)?;
+            self.check_generation(generation)?;
+            if authenticated && response.status() == StatusCode::UNAUTHORIZED {
+                if refreshed {
+                    return Err(Error::SignInExpired);
+                }
+                self.access_token(token.as_deref()).await?;
+                self.check_generation(generation)?;
+                refreshed = true;
+                continue;
+            }
+            if authenticated && response.status() == StatusCode::TOO_MANY_REQUESTS {
+                return Err(self.status_error(&response));
+            }
+            if !response.status().is_redirection() {
+                return Ok(response);
+            }
+            if redirects == 5 {
+                return Err(Error::InvalidResponse);
+            }
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or(Error::InvalidResponse)?;
+            url = url.join(location).map_err(|_| Error::InvalidResponse)?;
+            redirects += 1;
+        }
+    }
+
     /// Resolve only a public SoundCloud permalink, never an arbitrary URL.
     pub async fn resolve(&self, permalink: &str) -> Result<Resolved> {
         let url = Url::parse(permalink).map_err(|_| Error::InvalidResource)?;
@@ -995,6 +1073,26 @@ impl Client {
         endpoint.query_pairs_mut().append_pair("url", permalink);
         self.read(endpoint.as_str()).await
     }
+}
+
+fn validate_stream_url(url: &Url) -> Result<()> {
+    let secure = url.scheme() == "https";
+    #[cfg(test)]
+    let secure = secure
+        || (url.scheme() == "http"
+            && url
+                .host_str()
+                .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+                .is_some_and(|host| host.is_loopback()));
+    if !secure
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(Error::InvalidResource);
+    }
+    Ok(())
 }
 
 fn validate_title(title: &str) -> Result<()> {

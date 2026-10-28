@@ -90,6 +90,11 @@ SoundCloud streams use AAC HLS from the official API, preferring the offered
 160 kbps stream and using 96 kbps when necessary. Seeking and decoding happen off
 the UI thread. Signed stream URLs and audio buffers are session-only.
 
+Protected API stream links use the SoundCloud account's authorization. Redirects
+are checked individually, and account tokens are never forwarded to audio CDN
+hosts. An API token rejected with HTTP 401 is refreshed once; a CDN rejection
+does not trigger an account-token refresh.
+
 A track can be playable, preview-only, or blocked by the service. Previews are
 labelled as previews. Missing API streams, territorial restrictions, paywalls,
 unsupported formats, and DRM-protected content are reported without scraping,

@@ -22,7 +22,6 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use tokio::sync::mpsc;
 
-use crate::http::Http;
 use crate::player::EngineConfig;
 use crate::resample::Resampler;
 use crate::sink::{AudioControl, RodioSink};
@@ -76,7 +75,6 @@ pub(super) struct SoundCloudPlayback {
 impl SoundCloudPlayback {
     pub fn spawn(
         config: EngineConfig,
-        http: Http,
         client: Arc<crate::soundcloud::Client>,
         urn: String,
         position_ms: u32,
@@ -94,7 +92,7 @@ impl SoundCloudPlayback {
         let (tx, rx) = mpsc::channel(2);
         let transport_control = Arc::clone(&control);
         let download = tokio::spawn(async move {
-            let result = download(&http, &client, &urn, position_ms, &tx, &transport_control).await;
+            let result = download(&client, &urn, position_ms, &tx, &transport_control).await;
             if let Err(error) = result
                 && !transport_control.cancelled.load(Ordering::Acquire)
             {
@@ -312,22 +310,12 @@ fn parse_playlist(base: &Url, text: &str) -> Result<Playlist> {
 }
 
 async fn fetch(
-    http: &Http,
+    client: &crate::soundcloud::Client,
     url: Url,
     range: Option<(u64, u64)>,
     limit: usize,
 ) -> Result<(Url, Vec<u8>)> {
-    let mut request = http.client().map_err(anyhow::Error::msg)?.get(url);
-    if let Some((offset, length)) = range {
-        request = request.header(
-            reqwest::header::RANGE,
-            format!("bytes={offset}-{}", offset + length - 1),
-        );
-    }
-    let mut response = request
-        .send()
-        .await
-        .map_err(|error| anyhow!("Stream request failed: {}", error.without_url()))?;
+    let mut response = client.stream_response(url, range).await?;
     let status = response.status();
     if !status.is_success() {
         bail!("SoundCloud stream request failed ({})", status.as_u16());
@@ -360,7 +348,6 @@ async fn fetch(
 }
 
 async fn download(
-    http: &Http,
     client: &crate::soundcloud::Client,
     urn: &str,
     position_ms: u32,
@@ -376,7 +363,7 @@ async fn download(
     url = resolve(&url, address)?;
     let mut selected = None;
     for _ in 0..4 {
-        let (base, bytes) = fetch(http, url, None, MAX_PLAYLIST).await?;
+        let (base, bytes) = fetch(client, url, None, MAX_PLAYLIST).await?;
         let text =
             std::str::from_utf8(&bytes).context("SoundCloud returned an invalid HLS playlist")?;
         let playlist = parse_playlist(&base, text)?;
@@ -391,7 +378,7 @@ async fn download(
     let mut normalizer = Normalizer::default();
     let mut current_map = playlist.map;
     if let Some((url, range)) = current_map.clone() {
-        let (_, bytes) = fetch(http, url, range, MAX_SEGMENT).await?;
+        let (_, bytes) = fetch(client, url, range, MAX_SEGMENT).await?;
         normalizer.initialize(&bytes)?;
     }
     let mut elapsed = 0u32;
@@ -404,10 +391,10 @@ async fn download(
             elapsed = elapsed.saturating_add(segment.duration_ms);
             continue;
         }
-        let (_, bytes) = fetch(http, segment.url, segment.range, MAX_SEGMENT).await?;
+        let (_, bytes) = fetch(client, segment.url, segment.range, MAX_SEGMENT).await?;
         if segment.map != current_map {
             if let Some((url, range)) = segment.map.clone() {
-                let (_, initialization) = fetch(http, url, range, MAX_SEGMENT).await?;
+                let (_, initialization) = fetch(client, url, range, MAX_SEGMENT).await?;
                 normalizer.initialize(&initialization)?;
             }
             current_map = segment.map;

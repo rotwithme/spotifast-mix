@@ -10,7 +10,6 @@ use tokio::sync::mpsc;
 
 use super::stream::{SoundCloudPlayback, StreamEvent};
 use super::{MediaItem, MixContext, MixSession, MixSnapshot, QueueEntry, SavedEntry, SavedMedia};
-use crate::http::Http;
 use crate::player::{
     EngineConfig, OutputOwner, Playback, RepeatMode, StandaloneEvent, StandalonePlayer,
 };
@@ -85,7 +84,6 @@ impl MixRuntime {
     /// blocking worker; network requests and the scheduler stay asynchronous.
     pub fn spawn(
         config: EngineConfig,
-        http: Http,
         soundcloud: Arc<crate::soundcloud::Client>,
         notify: Notify,
     ) -> Self {
@@ -96,7 +94,6 @@ impl MixRuntime {
         };
         let worker = Worker {
             config,
-            http,
             soundcloud,
             notify,
             commands: tx.clone(),
@@ -312,7 +309,6 @@ impl MixSnapshot {
 
 struct Worker {
     config: EngineConfig,
-    http: Http,
     soundcloud: Arc<crate::soundcloud::Client>,
     notify: Notify,
     commands: mpsc::UnboundedSender<Message>,
@@ -702,7 +698,6 @@ impl Worker {
                 config.initial_volume = self.snapshot.volume;
                 self.stream = Some(SoundCloudPlayback::spawn(
                     config,
-                    self.http.clone(),
                     Arc::clone(&self.soundcloud),
                     track.urn.clone(),
                     self.snapshot.position_ms,
@@ -836,6 +831,7 @@ async fn restore(session: MixSession, client: Arc<crate::soundcloud::Client>) ->
 mod tests {
     use super::*;
     use crate::api::models::{PlayableItem, Track};
+    use crate::http::Http;
 
     fn song(title: &str) -> MediaItem {
         PlayableItem::Track(Track {
@@ -1063,7 +1059,6 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let runtime = MixRuntime::spawn(
             config,
-            Http::default(),
             client,
             Arc::new(move |event| {
                 let _ = tx.send(event);
