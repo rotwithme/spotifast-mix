@@ -512,15 +512,22 @@ fn row(app: &mut App, ui: &mut egui::Ui, row: LocalRow<'_>, selection: &mut Bulk
         MediaRef::SoundCloud(_) => "SoundCloud",
     };
     let subtitle = match item {
-        Some(MediaItem::SoundCloud(track)) => format!(
-            "{} • SoundCloud{}",
-            track.user.username,
-            if track.access == crate::soundcloud::Access::Preview {
-                " • Preview only"
+        Some(MediaItem::SoundCloud(track)) => {
+            let creator = track.creator();
+            let credit = if creator == track.user.username {
+                creator.to_string()
             } else {
-                ""
-            }
-        ),
+                format!("{creator} • Uploaded by {}", track.user.username)
+            };
+            format!(
+                "{credit} • SoundCloud{}",
+                if track.access == crate::soundcloud::Access::Preview {
+                    " • Preview only"
+                } else {
+                    ""
+                }
+            )
+        }
         Some(item) => format!("{} • {}", item.creator(), item.source()),
         None => format!("{source} • Metadata unavailable"),
     };
@@ -631,6 +638,32 @@ fn row_menu(
     ui.set_max_width(300.0);
     if let Some(item) = item {
         media_menu(app, ui, item);
+    }
+    if let Some(MediaItem::SoundCloud(track)) = item {
+        let liked = app
+            .integration
+            .liked
+            .get(&track.urn)
+            .copied()
+            .unwrap_or(track.user_favorite);
+        if super::super::widgets::menu_item(
+            ui,
+            &palette,
+            None,
+            if liked {
+                "Unlike on SoundCloud"
+            } else {
+                "Like on SoundCloud"
+            },
+        ) {
+            emit(
+                app,
+                MixAction::Like {
+                    urn: track.urn.clone(),
+                    liked: !liked,
+                },
+            );
+        }
     }
     super::super::widgets::menu_separator(ui, &palette);
     if super::super::widgets::menu_item_enabled(
