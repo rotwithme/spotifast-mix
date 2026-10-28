@@ -2477,7 +2477,10 @@ mod ordering_tests {
         let entries = projected(&app, "local");
         drop_playlist_row(&mut app, &entries, 1, 1, &key);
         apply_actions(&mut app);
-        assert_eq!(app.settings.pinned_contexts, [key.clone()]);
+        assert_eq!(
+            app.settings.pinned_contexts.as_slice(),
+            std::slice::from_ref(&key)
+        );
         app.settings.pinned_contexts.clear();
         let entries = projected(&app, "local");
         drop_playlist_row(&mut app, &entries, 0, 0, &key);
