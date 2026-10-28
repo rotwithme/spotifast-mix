@@ -6187,7 +6187,7 @@ dependencies = [
 
 [[package]]
 name = "spotifast-mix"
-version = "0.14.4"
+version = "0.14.5"
 dependencies = [
  "aes 0.8.4",
  "anyhow",

@@ -24013,7 +24013,7 @@ mod tests {
         app.update_checking = false;
         app.update_download = crate::updates::DownloadState::Downloading {
             received: 1,
-            total: Some(2),
+            total: 2,
         };
         assert_eq!(
             app.next_pass(),
