@@ -27,6 +27,8 @@ struct Entry {
     /// A playlist the account may drop songs on.
     editable: bool,
     playlist_index: Option<usize>,
+    /// A playlist saved on this computer, never a Spotify context URI.
+    local_id: Option<u64>,
     /// A folder row: its rootlist id, whether it is rolled up, and how
     /// many playlists it holds.
     folder: Option<(String, bool, usize)>,
@@ -36,6 +38,23 @@ struct Entry {
 }
 
 impl Entry {
+    fn open_action(&self) -> Action {
+        match self.local_id {
+            Some(id) => Action::Integration(crate::integration::Action::Open(
+                crate::integration::View::LocalPlaylist(id),
+            )),
+            None => Action::Open(self.page.clone()),
+        }
+    }
+
+    fn active(&self, app: &App) -> bool {
+        self.folder.is_none()
+            && self.page == *app.page()
+            && self.local_id.is_none_or(|id| {
+                app.integration.view == crate::integration::View::LocalPlaylist(id)
+            })
+    }
+
     fn ordering_key(&self) -> &str {
         if self.liked {
             LIKED_SONGS_KEY
@@ -49,7 +68,9 @@ impl Entry {
 /// right-click menu. Liked Songs has no URI of its own and plays the
 /// account's collection instead.
 fn entry_play_uri(app: &App, entry: &Entry) -> Option<String> {
-    if entry.liked {
+    if entry.local_id.is_some() {
+        None
+    } else if entry.liked {
         app.user
             .as_ref()
             .map(|user| format!("spotify:user:{}:collection", user.id))
@@ -60,8 +81,28 @@ fn entry_play_uri(app: &App, entry: &Entry) -> Option<String> {
     }
 }
 
+fn entry_play_action(app: &App, entry: &Entry) -> Option<Action> {
+    if let Some(id) = entry.local_id {
+        return app
+            .integration
+            .local
+            .playlists
+            .iter()
+            .find(|p| p.id == id)
+            .filter(|p| !p.items.is_empty())
+            .map(|_| Action::Integration(crate::integration::Action::PlayLocal(id)));
+    }
+    entry_play_uri(app, entry).map(|uri| Action::PlayContext {
+        uri,
+        offset_uri: None,
+        offset_index: None,
+    })
+}
+
 fn entry_is_playing_context(entry: &Entry, context: Option<&str>) -> bool {
-    if entry.liked {
+    if entry.local_id.is_some() {
+        false
+    } else if entry.liked {
         context.is_some_and(|context| context.ends_with(":collection"))
     } else {
         !entry.uri.is_empty() && context == Some(entry.uri.as_str())
@@ -77,7 +118,7 @@ fn cover_play_button(
     parent: &egui::Response,
     current_context: bool,
 ) -> bool {
-    let Some(uri) = entry_play_uri(app, entry) else {
+    let Some(action) = entry_play_action(app, entry) else {
         return false;
     };
     // The control pauses only while this context is actually playing; a
@@ -131,11 +172,7 @@ fn cover_play_button(
         if current_context {
             app.actions.push(Action::TogglePlay);
         } else {
-            app.actions.push(Action::PlayContext {
-                uri,
-                offset_uri: None,
-                offset_index: None,
-            });
+            app.actions.push(action);
         }
     }
     true
@@ -162,7 +199,7 @@ fn grid_play_button(
     parent: &egui::Response,
     playing_here: bool,
 ) -> bool {
-    let Some(uri) = entry_play_uri(app, entry) else {
+    let Some(action) = entry_play_action(app, entry) else {
         return false;
     };
     let rect = grid_play_rect(cover_rect);
@@ -216,11 +253,7 @@ fn grid_play_button(
     if playing_here {
         app.actions.push(Action::TogglePlay);
     } else {
-        app.actions.push(Action::PlayContext {
-            uri,
-            offset_uri: None,
-            offset_index: None,
-        });
+        app.actions.push(action);
     }
     true
 }
@@ -263,6 +296,16 @@ fn finish_entry_interaction(
                     .collect(),
                 saved: true,
             });
+        } else if let Some(id) = entry.local_id {
+            app.actions
+                .push(Action::Integration(crate::integration::Action::AddLocal {
+                    id,
+                    items: track
+                        .items
+                        .iter()
+                        .map(|item| crate::mix::MediaRef::Spotify(item.uri().to_string()))
+                        .collect(),
+                }));
         } else if let Page::Playlist(id) = &entry.page {
             app.actions.push(Action::AddToPlaylist {
                 playlist_id: id.clone(),
@@ -277,20 +320,16 @@ fn finish_entry_interaction(
             app.actions
                 .push(Action::ToggleLibraryFolder(folder_id.clone()));
         } else {
-            app.actions.push(Action::Open(entry.page.clone()));
+            app.actions.push(entry.open_action());
         }
     }
     if !app.settings.sidebar_grid
         && response.double_clicked()
         && entry.folder.is_none()
         && !cover_took_click
-        && let Some(uri) = entry_play_uri(app, entry)
+        && let Some(action) = entry_play_action(app, entry)
     {
-        app.actions.push(Action::PlayContext {
-            uri,
-            offset_uri: None,
-            offset_index: None,
-        });
+        app.actions.push(action);
     }
     entry_menu(app, response, entry, custom_order);
     crate::autoscroll::row(ui, response);
@@ -319,6 +358,7 @@ fn liked_entry(app: &App) -> Entry {
         owned: false,
         editable: false,
         playlist_index: None,
+        local_id: None,
         folder: None,
         depth: 0,
         added_at: None,
@@ -752,6 +792,39 @@ fn playlist_rows(app: &App, sort: LibrarySort, needle: &str, entries: &mut Vec<E
             ));
         }
     }
+    entries.extend(
+        app.integration
+            .local
+            .playlists
+            .iter()
+            .filter(|playlist| needle.is_empty() || playlist.name.to_lowercase().contains(needle))
+            .map(|playlist| local_playlist_entry(app, playlist)),
+    );
+}
+
+fn local_playlist_entry(app: &App, playlist: &crate::mix::MixedPlaylist) -> Entry {
+    let subtitle = format!(
+        "Local • {}",
+        app.locale.song_count(playlist.items.len() as u32)
+    );
+    Entry {
+        image: None,
+        grid_image: None,
+        name: playlist.name.clone(),
+        grid_subtitle: subtitle.clone(),
+        subtitle,
+        page: Page::Mix,
+        uri: format!("spotifast-mix:playlist:{}", playlist.id),
+        round: false,
+        liked: false,
+        owned: true,
+        editable: app.integration.local_ready,
+        playlist_index: None,
+        local_id: Some(playlist.id),
+        folder: None,
+        depth: 0,
+        added_at: None,
+    }
 }
 
 /// Playlist rows in account order, including collapsible folders (#95).
@@ -793,6 +866,7 @@ fn folder_rows(app: &App, user_id: &str, entries: &mut Vec<Entry>) {
                         owned: false,
                         editable: false,
                         playlist_index: None,
+                        local_id: None,
                         folder: Some((id.clone(), collapsed, count)),
                         depth,
                         added_at: None,
@@ -916,6 +990,7 @@ fn playlist_entry(
         owned: playlist.owned_by(user_id),
         editable,
         playlist_index: Some(index),
+        local_id: None,
         folder: None,
         depth,
         added_at: None,
@@ -1200,10 +1275,20 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
     match filter {
         Filter::Playlists => {
             playlist_rows(app, sort, &needle, &mut entries);
-            match &app.library.playlists {
-                Loadable::Loaded(_) => {}
-                Loadable::Loading | Loadable::NotLoaded => loading = true,
-                Loadable::Failed(message) => error = Some(message.clone()),
+            if app.is_connected() {
+                match &app.library.playlists {
+                    Loadable::Loaded(_) => {}
+                    Loadable::Loading | Loadable::NotLoaded => loading = true,
+                    Loadable::Failed(message) => error = Some(message.clone()),
+                }
+            }
+            if let Some(message) = &app.integration.local_error {
+                error = Some(match error {
+                    Some(previous) => format!("{previous}\n{message}"),
+                    None => message.clone(),
+                });
+            } else if !app.integration.local_ready {
+                loading = true;
             }
         }
         Filter::Albums => {
@@ -1234,6 +1319,7 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
                     owned: false,
                     editable: false,
                     playlist_index: None,
+                    local_id: None,
                     folder: None,
                     depth: 0,
                     added_at: saved_time(saved.added_at.as_deref()),
@@ -1263,6 +1349,7 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
                     owned: false,
                     editable: false,
                     playlist_index: None,
+                    local_id: None,
                     folder: None,
                     depth: 0,
                     added_at: None,
@@ -1299,6 +1386,7 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
                     owned: false,
                     editable: false,
                     playlist_index: None,
+                    local_id: None,
                     folder: None,
                     depth: 0,
                     added_at: saved_time(saved.added_at.as_deref()),
@@ -1319,9 +1407,10 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
         .iter()
         .take_while(|entry| pins.iter().any(|key| key == entry.ordering_key()))
         .count();
-    let playing_context = app.playing_context_uri();
+    let playing_context = (!app.integration.local_active)
+        .then(|| app.playing_context_uri())
+        .flatten();
     let context_playing = app.believed_playing();
-    let current_page = app.page().clone();
 
     crate::autoscroll::show(
         ui,
@@ -1408,7 +1497,7 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
                 }
                 let droppable = entry.liked || entry.editable;
                 let drop_hover = drop_target == Some(index);
-                let active = entry.folder.is_none() && entry.page == current_page;
+                let active = entry.active(app);
                 // Liked Songs has no URI of its own here; Spotify plays it
                 // as the account's collection context.
                 let current = entry_is_playing_context(entry, playing_context.as_deref());
@@ -1746,9 +1835,10 @@ fn library_grid(
     }
     let palette = app.palette;
     let pins = app.settings.library_pins();
-    let playing_context = app.playing_context_uri();
+    let playing_context = (!app.integration.local_active)
+        .then(|| app.playing_context_uri())
+        .flatten();
     let context_playing = app.believed_playing();
-    let current_page = app.page().clone();
     let layout = grid_layout(ui.available_width());
     let origin = ui.cursor().min;
     let pointer = ui.ctx().pointer_latest_pos().filter(|pos| {
@@ -1778,7 +1868,7 @@ fn library_grid(
                     entry.folder.as_ref().map(|(id, _, _)| id.as_str()),
                 );
                 ui.scope_builder(egui::UiBuilder::new().id(grid_id.with(entry_id)), |ui| {
-                    let active = entry.folder.is_none() && entry.page == current_page;
+                    let active = entry.active(app);
                     let playing_here = entry_is_playing_context(entry, playing_context.as_deref());
                     let playing = context_playing && playing_here;
                     let pinned = pins.iter().any(|key| key == entry.ordering_key());
@@ -1950,7 +2040,34 @@ fn library_grid(
 }
 
 fn entry_menu(app: &mut App, response: &egui::Response, entry: &Entry, custom_order: bool) {
-    if !entry.uri.is_empty() {
+    if entry.local_id.is_some() {
+        egui::Popup::context_menu(response)
+            .frame(super::widgets::menu_frame(&app.palette))
+            .show(|ui| {
+                ui.set_min_width(200.0);
+                ui.set_max_width(300.0);
+                let palette = app.palette;
+                if super::widgets::menu_item(
+                    ui,
+                    &palette,
+                    Some(Icon::Library),
+                    "Open local playlist",
+                ) {
+                    app.actions.push(entry.open_action());
+                }
+                if let Some(action) = entry_play_action(app, entry)
+                    && super::widgets::menu_item(
+                        ui,
+                        &palette,
+                        Some(Icon::Play),
+                        &gettext(app.locale, "Play"),
+                    )
+                {
+                    app.actions.push(action);
+                }
+                pin_menu(app, ui, entry.ordering_key());
+            });
+    } else if !entry.uri.is_empty() {
         let owned_playlist = entry
             .owned
             .then_some(entry.playlist_index)
@@ -2044,6 +2161,12 @@ fn pin_menu(app: &mut App, ui: &mut egui::Ui, key: &str) {
 fn drop_playlist_row(app: &mut App, entries: &[Entry], pinned_rows: usize, slot: usize, key: &str) {
     if key != LIKED_SONGS_KEY
         && !app
+            .integration
+            .local
+            .playlists
+            .iter()
+            .any(|p| format!("spotifast-mix:playlist:{}", p.id) == key)
+        && !app
             .library
             .playlists
             .get()
@@ -2092,11 +2215,12 @@ fn drop_playlist_row(app: &mut App, entries: &[Entry], pinned_rows: usize, slot:
 /// rows hidden by a search or collapsed folder. A drag snapshots this
 /// whole arrangement before applying its new local position.
 fn full_playlist_order(app: &App) -> Vec<String> {
-    let Some(playlists) = app.library.playlists.get() else {
-        return Vec::new();
-    };
-    let mut entries: Vec<_> = playlists
-        .iter()
+    let mut entries: Vec<_> = app
+        .library
+        .playlists
+        .get()
+        .into_iter()
+        .flatten()
         .enumerate()
         .map(|(index, playlist)| {
             playlist_entry(
@@ -2110,6 +2234,13 @@ fn full_playlist_order(app: &App) -> Vec<String> {
             )
         })
         .collect();
+    entries.extend(
+        app.integration
+            .local
+            .playlists
+            .iter()
+            .map(|p| local_playlist_entry(app, p)),
+    );
     entries.push(liked_entry(app));
     order_entries(
         app,
@@ -2318,6 +2449,95 @@ mod ordering_tests {
             &mut entries,
         );
         entries
+    }
+
+    #[test]
+    fn local_playlists_share_filters_pins_and_the_complete_sidebar_order() {
+        let mut app = ownership_app("local-playlist-shelf");
+        app.settings.liked_songs_pinned = false;
+        app.integration.local_ready = true;
+        app.integration.local.playlists = vec![crate::mix::MixedPlaylist {
+            id: 17,
+            name: "Alpha local".into(),
+            items: vec![],
+        }];
+        app.settings
+            .library_sort
+            .insert(Filter::Playlists, LibrarySort::Name);
+        let entries = projected(&app, "alpha");
+        assert_eq!(ids(&entries), ["b", "c", "17"]);
+        assert!(entries[2].subtitle.starts_with("Local"));
+        app.settings.library_by_you = true;
+        assert_eq!(ids(&projected(&app, "alpha")), ["c", "17"]);
+
+        let key = "spotifast-mix:playlist:17".to_string();
+        app.settings.pinned_contexts = vec![key.clone()];
+        assert_eq!(ids(&projected(&app, "alpha")), ["17", "c"]);
+        // A filtered drag snapshots even the Spotify rows hidden by By You.
+        let entries = projected(&app, "local");
+        drop_playlist_row(&mut app, &entries, 1, 1, &key);
+        apply_actions(&mut app);
+        assert_eq!(app.settings.pinned_contexts, [key.clone()]);
+        app.settings.pinned_contexts.clear();
+        let entries = projected(&app, "local");
+        drop_playlist_row(&mut app, &entries, 0, 0, &key);
+        apply_actions(&mut app);
+        assert!(app.settings.sidebar_order.contains(&uri("b")));
+        assert!(app.settings.sidebar_order.contains(&key));
+
+        // Local playlists also project with no Spotify account or loaded library.
+        app.user = None;
+        app.library.playlists = Loadable::NotLoaded;
+        assert!(
+            projected(&app, "local")
+                .iter()
+                .any(|entry| entry.local_id == Some(17))
+        );
+        assert!(full_playlist_order(&app).contains(&key));
+        app.integration.local.playlists[0].name = "Renamed".into();
+        assert!(projected(&app, "local").is_empty());
+        assert_eq!(ids(&projected(&app, "renamed")), ["17"]);
+        app.integration.local.playlists.clear();
+        assert!(projected(&app, "renamed").is_empty());
+        app.backend.shutdown();
+    }
+
+    #[test]
+    fn local_sidebar_actions_never_use_spotify_contexts_or_select_sibling_playlists() {
+        let mut app = app("local-playlist-actions");
+        let mut playlist = crate::mix::MixedPlaylist {
+            id: 17,
+            name: "Shared name".into(),
+            items: vec![],
+        };
+        app.integration.local.playlists = vec![playlist.clone()];
+        let entry = local_playlist_entry(&app, &playlist);
+        assert!(entry_play_uri(&app, &entry).is_none());
+        assert!(entry_play_action(&app, &entry).is_none());
+        assert!(matches!(
+            entry.open_action(),
+            Action::Integration(crate::integration::Action::Open(
+                crate::integration::View::LocalPlaylist(17)
+            ))
+        ));
+        assert!(!entry_is_playing_context(&entry, Some(&entry.uri)));
+
+        app.open(Page::Mix);
+        app.integration.view = crate::integration::View::LocalPlaylist(18);
+        assert!(!entry.active(&app));
+        app.integration.view = crate::integration::View::LocalPlaylist(17);
+        assert!(entry.active(&app));
+        playlist.items.push(crate::mix::MediaRef::SoundCloud(
+            "soundcloud:tracks:3".into(),
+        ));
+        app.integration.local.playlists[0] = playlist;
+        assert!(matches!(
+            entry_play_action(&app, &entry),
+            Some(Action::Integration(crate::integration::Action::PlayLocal(
+                17
+            )))
+        ));
+        app.backend.shutdown();
     }
 
     /// Verify that ownership filtering composes with search and pins while

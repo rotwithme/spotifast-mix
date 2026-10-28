@@ -59,6 +59,14 @@ to either service. Spotify playlists accept Spotify songs, and SoundCloud playli
 accept SoundCloud songs. Inaccessible tracks stay identifiable as unavailable
 entries rather than being replaced by another recording.
 
+Local playlists appear alongside Spotify playlists in the sidebar's **Playlists**
+list, labelled **Local**, without opening Music library first. Click a playlist
+to open it, or use its cover Play button, double-click, or right-click **Play** to
+start Local mix. The same sidebar search, name sorting, **By You** filter, pinning,
+and custom drag order include local playlists. They remain accessible without a
+Spotify sign-in. Drag selected Spotify songs onto a local playlist to add them.
+Renaming or deleting a local playlist updates its sidebar row immediately.
+
 To add songs together, select Spotify rows with Ctrl-click or Shift-click,
 right-click a selected row, and choose **Add to local playlist**. SoundCloud
 and local song lists have checkboxes and **Select all**. Choose an existing local
